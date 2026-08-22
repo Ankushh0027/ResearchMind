@@ -248,7 +248,9 @@ async def test_f_deterministic_output() -> None:
         goal, run_id="fixed_run", plan_id="fixed_plan"
     )
 
-    assert plan_1.model_dump() == plan_2.model_dump()
+    assert plan_1.model_dump(exclude={"created_at"}) == plan_2.model_dump(
+        exclude={"created_at"}
+    )
     assert dag_1.topological_order == dag_2.topological_order
 
 
