@@ -227,3 +227,10 @@ class ExecutionCancelledError(ResearchMindError):
         )
         self.entity_id = entity_id
         self.reason = reason
+
+
+class EvidenceValidationError(ResearchMindError):
+    """Raised when evidence content, provenance, or identifiers fail validation."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message, details)

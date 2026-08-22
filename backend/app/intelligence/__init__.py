@@ -1,5 +1,12 @@
-"""Intelligence layer protocols, evaluation models, planner, and research dossier schemas."""
+"""Intelligence layer protocols, evaluation models, planner, evidence schemas, and research dossiers."""
 
+from app.intelligence.evidence import (
+    EvidenceRecord,
+    SourceProvenance,
+    compute_sha256_hash,
+    generate_evidence_id,
+    generate_source_id,
+)
 from app.intelligence.models import (
     CitationReference,
     ContradictionItem,
@@ -25,6 +32,7 @@ __all__ = [
     "ContradictionItem",
     "EvaluationReport",
     "EvaluationRubricScore",
+    "EvidenceRecord",
     "KeyFinding",
     "LLMClientProtocol",
     "PlannedDecomposition",
@@ -33,5 +41,9 @@ __all__ = [
     "PlannerError",
     "ResearchDossier",
     "SearchClientProtocol",
+    "SourceProvenance",
     "VectorMemoryProtocol",
+    "compute_sha256_hash",
+    "generate_evidence_id",
+    "generate_source_id",
 ]
