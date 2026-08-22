@@ -1,13 +1,6 @@
 """Domain enums for ResearchMind multi-agent workflow."""
 
-from enum import Enum
-
-
-class StrEnum(str, Enum):
-    """String-backed Enum base class for clean JSON serialization."""
-
-    def __str__(self) -> str:
-        return str(self.value)
+from enum import StrEnum
 
 
 class AgentRole(StrEnum):
