@@ -30,6 +30,12 @@ class DAGValidationError(ResearchMindError):
         self.violating_nodes = violating_nodes or []
 
 
+class InvalidExecutionPlanError(DAGValidationError):
+    """Raised when an execution plan fails validation prior to scheduling."""
+
+    pass
+
+
 class InvalidStateTransitionError(ResearchMindError):
     """Raised when an illegal lifecycle state transition is attempted."""
 
@@ -112,6 +118,12 @@ class IdempotencyConflictError(ResearchMindError):
         self.existing_status = existing_status
 
 
+class DuplicateExecutionError(IdempotencyConflictError):
+    """Raised when duplicate execution of an already completed task is attempted."""
+
+    pass
+
+
 class CheckpointCorruptedError(ResearchMindError):
     """Raised when a checkpoint snapshot fails cryptographic hash integrity verification."""
 
@@ -129,3 +141,89 @@ class CheckpointCorruptedError(ResearchMindError):
         self.snapshot_id = snapshot_id
         self.expected_hash = expected_hash
         self.computed_hash = computed_hash
+
+
+class CheckpointRecoveryError(ResearchMindError):
+    """Raised when state recovery from a checkpoint snapshot fails."""
+
+    def __init__(self, run_id: str, reason: str) -> None:
+        super().__init__(
+            f"Failed to recover checkpoint for run '{run_id}': {reason}",
+            {"run_id": run_id, "reason": reason},
+        )
+        self.run_id = run_id
+        self.reason = reason
+
+
+class SchedulerError(ResearchMindError):
+    """Raised when task scheduling encounters an unresolvable graph or state conflict."""
+
+    pass
+
+
+class DeadlockDetectedError(SchedulerError):
+    """Raised when the execution graph reaches an unresolvable deadlock state."""
+
+    def __init__(self, run_id: str, uncompleted_task_ids: list[str]) -> None:
+        super().__init__(
+            f"Deadlock detected in run '{run_id}': tasks {uncompleted_task_ids} cannot make progress",
+            {"run_id": run_id, "uncompleted_task_ids": uncompleted_task_ids},
+        )
+        self.run_id = run_id
+        self.uncompleted_task_ids = uncompleted_task_ids
+
+
+class TaskTimeoutError(ResearchMindError):
+    """Raised when a task execution exceeds its allocated timeout."""
+
+    def __init__(self, subtask_id: str, timeout_seconds: int) -> None:
+        super().__init__(
+            f"Task '{subtask_id}' timed out after {timeout_seconds} seconds",
+            {"subtask_id": subtask_id, "timeout_seconds": timeout_seconds},
+        )
+        self.subtask_id = subtask_id
+        self.timeout_seconds = timeout_seconds
+
+
+class WorkerExecutionError(ResearchMindError):
+    """Raised when a worker fails with an unhandled exception during task execution."""
+
+    def __init__(
+        self, subtask_id: str, original_error: str, is_retryable: bool = True
+    ) -> None:
+        super().__init__(
+            f"Worker execution failed for task '{subtask_id}': {original_error}",
+            {
+                "subtask_id": subtask_id,
+                "original_error": original_error,
+                "is_retryable": is_retryable,
+            },
+        )
+        self.subtask_id = subtask_id
+        self.original_error = original_error
+        self.is_retryable = is_retryable
+
+
+class RetryExhaustedError(ResearchMindError):
+    """Raised when a task fails repeatedly and exceeds maximum retry attempts."""
+
+    def __init__(self, subtask_id: str, attempts: int, last_error: str) -> None:
+        super().__init__(
+            f"Task '{subtask_id}' exhausted all {attempts} retry attempts. Last error: {last_error}",
+            {"subtask_id": subtask_id, "attempts": attempts, "last_error": last_error},
+        )
+        self.subtask_id = subtask_id
+        self.attempts = attempts
+        self.last_error = last_error
+
+
+class ExecutionCancelledError(ResearchMindError):
+    """Raised when an operation is cancelled via cooperative cancellation token."""
+
+    def __init__(self, entity_id: str, reason: str = "Operation was cancelled") -> None:
+        super().__init__(
+            f"Execution cancelled for '{entity_id}': {reason}",
+            {"entity_id": entity_id, "reason": reason},
+        )
+        self.entity_id = entity_id
+        self.reason = reason

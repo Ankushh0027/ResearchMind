@@ -75,3 +75,27 @@ At any non-terminal state, a run or subtask may transition to:
 3. **Pub/Sub Acknowledgement Semantics**:
    - Messages are acknowledged only after the state transition is successfully committed to Firestore.
    - In case of worker death during processing, the unacknowledged message is redelivered after the ack deadline expires.
+
+---
+
+## 4. Execution Engine & Scheduling Semantics
+
+1. **Topological Task Scheduling**:
+   - Tasks with zero unsatisfied prerequisite dependencies are eligible for immediate dispatch.
+   - Dependent nodes (e.g., `Analyst` awaiting multiple parallel `Researcher` queries) remain blocked until all upstream dependencies reach `COMPLETED` status.
+   - Runnable selection is deterministic (lexicographically ordered by `subtask_id`).
+
+2. **Concurrent Task Dispatching**:
+   - Parallel tasks execute asynchronously bounded by a configurable `max_concurrency` semaphore.
+   - Task completion triggers state checkpoints and unlocks downstream dependent nodes.
+
+3. **Exponential Backoff & Retries**:
+   - Transient failures trigger retries with exponential backoff: $\text{delay} = \min(\text{base\_delay} \times 2^{\text{attempt}-2}, \text{max\_delay})$.
+   - Non-retryable errors or retry-exhausted tasks transition to `FAILED`.
+
+4. **Cooperative Cancellation**:
+   - `CancellationToken` enables graceful shutdown of active executions.
+   - Cancelling a run marks uncompleted tasks as `CANCELLED` and terminates the run state in `RunStage.CANCELLED`.
+
+5. **Deadlock Prevention**:
+   - If uncompleted tasks remain but zero tasks are runnable and zero workers are active, the engine raises `DeadlockDetectedError` and records a structured failure event.

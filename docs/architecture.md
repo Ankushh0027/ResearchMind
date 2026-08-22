@@ -16,7 +16,7 @@ API Gateway (FastAPI on Cloud Run)
   │  (Creates research run record, initializes state in Firestore)
   ▼
 Orchestration Engine / Taskmaster
-  │  (Publishes tasks to Google Cloud Pub/Sub)
+  │  (Publishes tasks to Google Cloud Pub/Sub / Async Worker Pool)
   ├──► Planner Agent (Decomposes research goal into inquiry plan & subtasks)
   │
   ├──► Parallel Research Workers (Execute concurrent subtasks)
@@ -43,11 +43,11 @@ Orchestration Engine / Taskmaster
 - Dispatches execution tasks to **Google Cloud Pub/Sub** topics.
 - Provides SSE (Server-Sent Events) and REST polling endpoints for real-time run progress.
 
-### 2.2 Taskmaster / Orchestrator
-- Coordinates the execution lifecycle across agent stages.
-- Manages dependencies between subtasks using a Directed Acyclic Graph (DAG).
-- Enforces execution timeouts, concurrency limits, and retry policies.
-- Handles worker heartbeat monitoring and failure recovery.
+### 2.2 Taskmaster / Orchestration Engine (`app.orchestration`)
+- **DAGScheduler**: Performs dependency-aware topological scheduling, determining runnable tasks whose prerequisite dependencies are satisfied.
+- **DAGExecutor**: Coordinates asynchronous concurrent execution with bounded concurrency (`max_concurrency`), timeouts, retries, and checkpointing.
+- **Deadlock Detection**: Detects unresolvable graph deadlocks and produces structured failures rather than hanging.
+- **Cooperative Cancellation**: Halts scheduling of new tasks and gracefully cancels in-flight workers.
 
 ### 2.3 Agent Mesh
 
@@ -65,39 +65,55 @@ Orchestration Engine / Taskmaster
 
 ## 3. Reliability & Resilience Principles
 
-### 3.1 Persistent State
-All workflow state mutations are committed atomically to **Google Cloud Firestore**. Every task execution produces a state snapshot containing:
+### 3.1 Persistent State & Checkpoints
+All workflow state mutations produce immutable `CheckpointSnapshot` records containing:
 - Run ID & Task ID
-- Current stage & timestamp
-- Input parameters & execution context
-- Evidence gathered & agent decisions
-- Checkpoint tokens allowing safe resumption
+- Monotonically increasing checkpoint version
+- Cryptographic SHA-256 state hash ensuring data integrity
+- Full serialized state payload enabling zero-loss recovery across process restarts
 
 ### 3.2 Idempotency
-- Every subtask is assigned a deterministic hash based on its run ID, subtask key, and input parameters.
-- If a message is redelivered by Pub/Sub (at-least-once delivery), the worker checks Firestore before executing. If the task state is already completed, the duplicate is acknowledged and skipped.
+- Every subtask execution request generates a deterministic `idempotency_key` (e.g. `idem_{run_id}_{subtask_id}_att{attempt}`).
+- Duplicate messages or repeated worker deliveries do not cause duplicate state mutations or duplicate logical task completion.
 
 ### 3.3 Retries & Exponential Backoff
-- Transient failures (e.g., API rate limits, network timeouts) trigger automatic retries with exponential backoff and jitter.
-- Non-retryable errors (e.g., policy violations, malformed inputs) immediately transition the specific subtask to a `FAILED` state while allowing independent branches to continue.
+- `RetryPolicy` calculates backoff delays: $\text{delay} = \min(\text{base\_delay} \times \text{factor}^{\text{attempt}-2}, \text{max\_delay})$.
+- Distinguishes between retryable errors (transient timeouts, rate limits) and non-retryable errors (schema violations, permission rejections).
 
-### 3.4 Failure Recovery
-- State machines are designed to be crash-resilient.
-- If an agent worker crashes during execution, the orchestrator detects missing heartbeats and reassigns the uncompleted subtask to a fresh worker instance using the last committed checkpoint in Firestore.
+### 3.4 Deadlock & Failure Recovery
+- State machines are crash-resilient.
+- If uncompleted tasks exist but no tasks are runnable and no workers are active, `DeadlockDetectedError` terminates the run cleanly without infinite waiting.
+- `DAGExecutor.resume_from_checkpoint()` restores completed task states and resumes execution strictly on pending subtasks.
 
 ---
 
 ## 4. Observability & Telemetry
 
-- **Structured JSON Logging**: All logs are emitted in structured JSON format with correlated `trace_id`, `run_id`, and `agent_id` fields compatible with Google Cloud Logging.
-- **Trace Context Propagation**: Distributed trace headers propagate across Pub/Sub messages and agent boundaries.
-- **Metrics & Auditing**: Detailed operational metrics (token usage, latency per agent, verification rejection rates) are recorded for continuous evaluation.
+- **Typed Execution Events**: `RunStartedEvent`, `TaskScheduledEvent`, `TaskStartedEvent`, `TaskCompletedEvent`, `TaskFailedEvent`, `TaskRetryScheduledEvent`, `TaskCancelledEvent`, `RunCompletedEvent`, `RunFailedEvent`, `DeadlockDetectedEvent`.
+- **Metrics & Auditing**: `ObservabilityHooksProtocol` hooks record durations, retry statistics, and token consumption (`prompt_tokens`, `completion_tokens`, `total_tokens`).
 
 ---
 
 ## 5. Security & Isolation Boundaries
 
-- **Least Privilege Access**: Agent workers operate under scoped GCP Service Accounts with minimal IAM permissions.
-- **Data Isolation**: Each research session maintains strict multi-tenant data boundaries in both Firestore and Qdrant.
-- **Prompt Injection Defense**: All external content ingested by Research Agents (web pages, PDFs) is treated as untrusted data and strictly sanitized before being fed into reasoning prompts.
-- **No Secret Persistence**: API keys and infrastructure credentials are exclusively injected via Cloud Secret Manager or environment variables at runtime.
+- **Least Privilege Access**: `SecurityPolicy` validates agent tool permissions prior to dispatching task requests.
+- **Untrusted Content Sanitization**: External text is wrapped in `UntrustedContentEnvelope` with XML delimiters and control-token neutralization.
+- **Default-Deny Model**: Unknown roles or ungranted tool permissions raise `PermissionDeniedError`.
+
+---
+
+## 6. Worker Abstraction & Future Adapter Boundary
+
+The orchestration layer remains strictly framework-agnostic through the `WorkerProtocol`:
+
+```python
+class WorkerProtocol(Protocol):
+    async def execute(self, request: AgentRequest) -> WorkerResponseEnvelope: ...
+```
+
+This clean boundary allows future integration of:
+- `MockWorker` (in-memory deterministic testing)
+- `GeminiWorker` (direct Gemini API multi-agent reasoning)
+- `GoogleADKWorker` (Google Agent Development Kit workflow adapter)
+
+without modifying the core DAG scheduling or state machine engine.
