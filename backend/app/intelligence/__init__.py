@@ -1,4 +1,4 @@
-"""Intelligence layer protocols, evaluation models, and research dossier schemas."""
+"""Intelligence layer protocols, evaluation models, planner, and research dossier schemas."""
 
 from app.intelligence.models import (
     CitationReference,
@@ -7,6 +7,12 @@ from app.intelligence.models import (
     EvaluationRubricScore,
     KeyFinding,
     ResearchDossier,
+)
+from app.intelligence.planner import (
+    PlannedDecomposition,
+    PlannedSubtask,
+    PlannerAgent,
+    PlannerError,
 )
 from app.intelligence.protocols import (
     LLMClientProtocol,
@@ -21,6 +27,10 @@ __all__ = [
     "EvaluationRubricScore",
     "KeyFinding",
     "LLMClientProtocol",
+    "PlannedDecomposition",
+    "PlannedSubtask",
+    "PlannerAgent",
+    "PlannerError",
     "ResearchDossier",
     "SearchClientProtocol",
     "VectorMemoryProtocol",

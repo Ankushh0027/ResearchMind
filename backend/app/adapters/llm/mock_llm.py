@@ -48,9 +48,10 @@ class MockLLMClient(LLMClientProtocol):
         system_prompt: str,
         user_prompt: str,
         response_schema: type[T],
-        _temperature: float = 0.0,
+        temperature: float = 0.0,
     ) -> T:
         """Record prompt and return registered structured response matching response_schema."""
+        _ = temperature  # Unused in deterministic mock
         self.recorded_structured_prompts.append(
             (system_prompt, user_prompt, response_schema)
         )
