@@ -1,4 +1,4 @@
-"""Intelligence layer protocols, evaluation models, planner, evidence schemas, and research dossiers."""
+"""Intelligence layer protocols, evaluation models, planner, evidence schemas, sanitization, and research dossiers."""
 
 from app.intelligence.evidence import (
     EvidenceRecord,
@@ -26,22 +26,32 @@ from app.intelligence.protocols import (
     SearchClientProtocol,
     VectorMemoryProtocol,
 )
+from app.intelligence.sanitization import (
+    MAX_RAW_TEXT_BYTES,
+    REDACTED_REPLACEMENT,
+    ContentBoundarySanitizer,
+    UntrustedContentEnvelope,
+)
 
 __all__ = [
     "CitationReference",
+    "ContentBoundarySanitizer",
     "ContradictionItem",
     "EvaluationReport",
     "EvaluationRubricScore",
     "EvidenceRecord",
     "KeyFinding",
     "LLMClientProtocol",
+    "MAX_RAW_TEXT_BYTES",
     "PlannedDecomposition",
     "PlannedSubtask",
     "PlannerAgent",
     "PlannerError",
+    "REDACTED_REPLACEMENT",
     "ResearchDossier",
     "SearchClientProtocol",
     "SourceProvenance",
+    "UntrustedContentEnvelope",
     "VectorMemoryProtocol",
     "compute_sha256_hash",
     "generate_evidence_id",
