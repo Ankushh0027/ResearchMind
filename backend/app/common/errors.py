@@ -484,3 +484,33 @@ class UngroundedCitationError(VerificationError):
         )
         self.evidence_id = evidence_id
         self.reason = reason
+
+
+class EvaluationError(ResearchMindError):
+    """Base domain exception for evaluator agent and quality audit errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "EVALUATION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code
+
+
+class ReportingError(ResearchMindError):
+    """Base domain exception for reporter agent and research dossier compilation errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "REPORTING_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code

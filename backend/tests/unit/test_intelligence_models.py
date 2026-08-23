@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.common.enums import SourceTrustLevel, VerificationStatus
-from app.common.evidence import ExtractedClaim
+from app.intelligence.claims import ExtractedClaim
 from app.intelligence.models import (
     CitationReference,
     ContradictionItem,

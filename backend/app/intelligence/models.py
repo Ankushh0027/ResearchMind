@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.common.enums import SourceTrustLevel, VerificationStatus
-from app.common.evidence import ExtractedClaim
+from app.intelligence.claims import ExtractedClaim
 
 
 def _utc_now() -> datetime:
@@ -167,7 +167,9 @@ class EvaluationReport(BaseModel):
         ..., min_length=1, description="Unique evaluation report identifier"
     )
     run_id: str = Field(..., min_length=1, description="Associated research run ID")
-    plan_id: str = Field(..., min_length=1, description="Associated research plan ID")
+    plan_id: str = Field(
+        default="plan_default", min_length=1, description="Associated research plan ID"
+    )
     passed: bool = Field(
         ..., description="Whether the research meets acceptance thresholds"
     )

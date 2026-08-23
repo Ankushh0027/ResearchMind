@@ -20,6 +20,11 @@ from app.intelligence.contradiction import (
     ContradictionDetectorProtocol,
     generate_contradiction_id,
 )
+from app.intelligence.evaluator import (
+    EvaluatorAgent,
+    EvaluatorProtocol,
+    generate_eval_id,
+)
 from app.intelligence.evidence import (
     EvidenceRecord,
     SourceProvenance,
@@ -51,6 +56,11 @@ from app.intelligence.protocols import (
     SearchClientProtocol,
     VectorMemoryProtocol,
 )
+from app.intelligence.reporter import (
+    ReporterAgent,
+    ReporterProtocol,
+    generate_dossier_id,
+)
 from app.intelligence.sanitization import (
     MAX_RAW_TEXT_BYTES,
     REDACTED_REPLACEMENT,
@@ -79,6 +89,8 @@ __all__ = [
     "DeterministicClaimExtractor",
     "EvaluationReport",
     "EvaluationRubricScore",
+    "EvaluatorAgent",
+    "EvaluatorProtocol",
     "EvidenceIngestionPipeline",
     "EvidenceRecord",
     "ExtractedClaim",
@@ -92,6 +104,8 @@ __all__ = [
     "PlannerError",
     "REDACTED_REPLACEMENT",
     "RawDocument",
+    "ReporterAgent",
+    "ReporterProtocol",
     "ResearchDossier",
     "SearchClientProtocol",
     "SourceProvenance",
@@ -107,6 +121,8 @@ __all__ = [
     "generate_citation_key",
     "generate_claim_id",
     "generate_contradiction_id",
+    "generate_dossier_id",
+    "generate_eval_id",
     "generate_evidence_id",
     "generate_finding_id",
     "generate_source_id",
