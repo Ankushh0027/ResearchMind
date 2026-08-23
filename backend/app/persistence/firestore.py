@@ -19,7 +19,7 @@ def _utc_now() -> datetime:
 
 def _create_firestore_async_client(project_id: str | None, database: str) -> Any:
     try:
-        from google.cloud import firestore  # type: ignore[import-untyped]
+        from google.cloud import firestore
 
         return firestore.AsyncClient(project=project_id, database=database)
     except ImportError as e:
