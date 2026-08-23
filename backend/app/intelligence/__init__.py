@@ -1,5 +1,11 @@
 """Intelligence layer protocols, evaluation models, planner, evidence schemas, sanitization, and research dossiers."""
 
+from app.intelligence.analyst import (
+    AnalystAgent,
+    AnalystProtocol,
+    ThematicAnalysisResult,
+    generate_finding_id,
+)
 from app.intelligence.claims import (
     ClaimExtractionResult,
     ClaimExtractorProtocol,
@@ -46,6 +52,8 @@ from app.intelligence.sanitization import (
 )
 
 __all__ = [
+    "AnalystAgent",
+    "AnalystProtocol",
     "CitationReference",
     "ClaimExtractionResult",
     "ClaimExtractorProtocol",
@@ -70,10 +78,12 @@ __all__ = [
     "ResearchDossier",
     "SearchClientProtocol",
     "SourceProvenance",
+    "ThematicAnalysisResult",
     "UntrustedContentEnvelope",
     "VectorMemoryProtocol",
     "compute_sha256_hash",
     "generate_claim_id",
     "generate_evidence_id",
+    "generate_finding_id",
     "generate_source_id",
 ]

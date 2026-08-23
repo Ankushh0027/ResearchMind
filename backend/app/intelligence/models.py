@@ -1,6 +1,7 @@
 """Intelligence output schemas, EvaluationReport, and ResearchDossier contracts."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +55,29 @@ class KeyFinding(BaseModel):
     evidence_ids: tuple[str, ...] = Field(
         default_factory=tuple,
         description="IDs of direct evidence supporting this finding",
+    )
+    run_id: str | None = Field(
+        default=None, description="Associated research run ID for tenant isolation"
+    )
+    confidence_score: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Grounded confidence rating [0.0 - 1.0]",
+    )
+    is_untrusted: bool = Field(
+        default=False,
+        description="Flag indicating if any supporting claim derives from untrusted evidence",
+    )
+    is_quarantined: bool = Field(
+        default=False,
+        description="Flag indicating if any supporting claim derives from quarantined evidence",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Contextual analytical metadata"
+    )
+    created_at: datetime = Field(
+        default_factory=_utc_now, description="Creation timestamp"
     )
 
 

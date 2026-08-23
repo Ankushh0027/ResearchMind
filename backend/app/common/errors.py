@@ -394,3 +394,35 @@ class InvalidClaimError(ClaimExtractionError):
         details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message, code="INVALID_CLAIM", details=details)
+
+
+class AnalysisError(ResearchMindError):
+    """Base domain exception for analyst agent and synthesis errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "ANALYSIS_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code
+
+
+class UngroundedFindingError(AnalysisError):
+    """Raised when a thematic finding lacks supporting claim or evidence IDs."""
+
+    def __init__(
+        self,
+        finding_title: str,
+        reason: str = "Finding has no supporting claim or evidence IDs",
+    ) -> None:
+        super().__init__(
+            f"Ungrounded finding: '{finding_title}' - {reason}",
+            code="UNGROUNDED_FINDING",
+            details={"finding_title": finding_title, "reason": reason},
+        )
+        self.finding_title = finding_title
+        self.reason = reason
