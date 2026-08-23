@@ -37,6 +37,20 @@ class CitationReference(BaseModel):
     trust_level: SourceTrustLevel = Field(
         default=SourceTrustLevel.GENERAL_WEB, description="Source trust category"
     )
+    run_id: str | None = Field(
+        default=None, description="Associated research run ID for tenant isolation"
+    )
+    is_untrusted: bool = Field(
+        default=False,
+        description="Flag indicating if the cited source required boundary sanitization",
+    )
+    is_quarantined: bool = Field(
+        default=False,
+        description="Flag indicating if the cited source contained quarantined content",
+    )
+    created_at: datetime = Field(
+        default_factory=_utc_now, description="Creation timestamp"
+    )
 
 
 class KeyFinding(BaseModel):

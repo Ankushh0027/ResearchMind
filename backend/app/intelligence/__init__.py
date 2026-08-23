@@ -1,5 +1,6 @@
 """Intelligence layer protocols, evaluation models, planner, evidence schemas, sanitization, and research dossiers."""
 
+from app.common.evidence import VerificationAudit
 from app.intelligence.analyst import (
     AnalystAgent,
     AnalystProtocol,
@@ -56,6 +57,13 @@ from app.intelligence.sanitization import (
     ContentBoundarySanitizer,
     UntrustedContentEnvelope,
 )
+from app.intelligence.verifier import (
+    VerificationResult,
+    VerifierAgent,
+    VerifierProtocol,
+    generate_audit_id,
+    generate_citation_key,
+)
 
 __all__ = [
     "AnalystAgent",
@@ -90,7 +98,13 @@ __all__ = [
     "ThematicAnalysisResult",
     "UntrustedContentEnvelope",
     "VectorMemoryProtocol",
+    "VerificationAudit",
+    "VerificationResult",
+    "VerifierAgent",
+    "VerifierProtocol",
     "compute_sha256_hash",
+    "generate_audit_id",
+    "generate_citation_key",
     "generate_claim_id",
     "generate_contradiction_id",
     "generate_evidence_id",

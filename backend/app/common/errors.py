@@ -452,3 +452,35 @@ class InvalidContradictionError(ContradictionDetectionError):
         details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message, code="INVALID_CONTRADICTION", details=details)
+
+
+class VerificationError(ResearchMindError):
+    """Base domain exception for verifier agent and grounding audit errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "VERIFICATION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code
+
+
+class UngroundedCitationError(VerificationError):
+    """Raised when a citation references a non-existent or ungrounded evidence record."""
+
+    def __init__(
+        self,
+        evidence_id: str,
+        reason: str = "Referenced evidence record does not exist in evidence pool",
+    ) -> None:
+        super().__init__(
+            f"Ungrounded citation for evidence '{evidence_id}': {reason}",
+            code="UNGROUNDED_CITATION",
+            details={"evidence_id": evidence_id, "reason": reason},
+        )
+        self.evidence_id = evidence_id
+        self.reason = reason
