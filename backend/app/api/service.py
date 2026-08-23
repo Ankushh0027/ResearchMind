@@ -13,35 +13,32 @@ from app.api.schemas import (
     RunDetailResponse,
     RunSummaryResponse,
 )
-from app.common.enums import (
-    AgentRole,
-    EdgeType,
-    RunStage,
-    TaskStatus,
-    TaskType,
-)
+from app.common.enums import RunStage
 from app.intelligence.models import ResearchDossier
+from app.jobs.in_memory import (
+    InMemoryJobConsumer,
+    InMemoryJobPublisher,
+    InMemoryJobQueue,
+)
+from app.jobs.protocols import (
+    JobConsumerProtocol,
+    JobEnvelope,
+    JobPublisherProtocol,
+)
+from app.jobs.worker import ResearchJobWorker
 from app.orchestration.cancellation import CancellationToken
-from app.orchestration.contracts import AgentRequest, TokenUsage, WorkerResponseEnvelope
+from app.orchestration.contracts import TokenUsage
 from app.orchestration.events import ExecutionEvent
-from app.orchestration.executor import DAGExecutor, ExecutionResult
 from app.orchestration.protocols import (
     CheckpointRepositoryProtocol,
     WorkerProtocol,
 )
-from app.orchestration.router import (
-    create_default_worker_router,
-)
+from app.orchestration.router import create_default_worker_router
 from app.orchestration.runtime import (
     InMemoryCheckpointRepository,
     InMemoryEventSink,
 )
-from app.state.models import (
-    DependencyEdge,
-    ResearchGoal,
-    ResearchPlan,
-    SubtaskNode,
-)
+from app.state.models import ResearchGoal
 
 
 def _utc_now() -> datetime:
@@ -75,7 +72,6 @@ class RunContext:
         self.duration_seconds: float = 0.0
         self.dossier: ResearchDossier | None = None
         self.error: str | None = None
-        self.task_future: asyncio.Task[None] | None = None
 
 
 class ResearchService:
@@ -84,6 +80,9 @@ class ResearchService:
     def __init__(
         self,
         router: WorkerProtocol | None = None,
+        publisher: JobPublisherProtocol | None = None,
+        consumer: JobConsumerProtocol | None = None,
+        worker: ResearchJobWorker | None = None,
         max_concurrency: int = 4,
     ) -> None:
         self._router = router or create_default_worker_router()
@@ -91,10 +90,48 @@ class ResearchService:
         self._runs: dict[str, RunContext] = {}
         self._lock = asyncio.Lock()
 
+        if publisher is None or consumer is None:
+            queue = InMemoryJobQueue()
+            self._worker = worker or ResearchJobWorker(
+                router=self._router,
+                run_context_resolver=self._get_run_context,
+                max_concurrency=self._max_concurrency,
+            )
+            self._worker.set_run_context_resolver(self._get_run_context)
+            self._publisher = publisher or InMemoryJobPublisher(queue)
+            self._consumer = consumer or InMemoryJobConsumer(
+                queue=queue, handler=self._worker, worker_concurrency=2
+            )
+        else:
+            self._publisher = publisher
+            self._consumer = consumer
+            self._worker = worker or ResearchJobWorker(
+                router=self._router,
+                run_context_resolver=self._get_run_context,
+                max_concurrency=self._max_concurrency,
+            )
+            self._worker.set_run_context_resolver(self._get_run_context)
+
+    def _get_run_context(self, run_id: str) -> RunContext | None:
+        """Resolve the RunContext container for a given run ID."""
+        return self._runs.get(run_id)
+
+    async def start(self) -> None:
+        """Start the asynchronous background job consumer loop."""
+        await self._consumer.start()
+
+    async def stop(self) -> None:
+        """Gracefully stop the background job consumer loop."""
+        await self._consumer.stop()
+
     async def create_and_start_run(
         self, request: CreateRunRequest
     ) -> RunSummaryResponse:
-        """Initialize research run, register cancellation token, and spawn background execution task."""
+        """Initialize research run, publish JobEnvelope, and return initial summary."""
+        # Auto-start consumer if not active
+        if not self._consumer.is_running():
+            await self._consumer.start()
+
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         goal_id = f"goal_{uuid.uuid4().hex[:8]}"
 
@@ -121,9 +158,16 @@ class ResearchService:
         async with self._lock:
             self._runs[run_id] = context
 
-        # Spawn background orchestration task
-        task = asyncio.create_task(self._execute_run_pipeline(context))
-        context.task_future = task
+        job_envelope = JobEnvelope(
+            job_id=f"job_{uuid.uuid4().hex[:12]}",
+            run_id=run_id,
+            goal_query=goal.query,
+            domain_tags=goal.domain_tags,
+            constraints=goal.constraints,
+            max_subtasks=goal.max_subtasks,
+        )
+
+        await self._publisher.publish(job_envelope)
 
         return RunSummaryResponse(
             run_id=run_id,
@@ -139,7 +183,7 @@ class ResearchService:
         if not context:
             return None
 
-        # Compute live duration if still running
+        # Compute live duration if still active
         if context.status in (
             RunStage.QUEUED,
             RunStage.PLANNING,
@@ -213,249 +257,6 @@ class ResearchService:
                 break
 
             await asyncio.sleep(0.1)
-
-    async def _execute_run_pipeline(self, context: RunContext) -> None:
-        """Coordinate full Planner -> DAGExecutor -> AgentWorkerRouter pipeline in background."""
-        context.status = RunStage.PLANNING
-        run_id = context.run_id
-        goal_query = context.goal.query
-
-        try:
-            # 1. PlannerWorker Decomposes the Goal
-            planner_req = AgentRequest(
-                request_id=f"req_plan_{run_id}",
-                run_id=run_id,
-                subtask_id="planner_task",
-                agent_role=AgentRole.PLANNER,
-                task_type=TaskType.DECOMPOSITION,
-                goal_context=goal_query,
-                input_data={"goal_query": goal_query},
-                idempotency_key=f"idem_plan_{run_id}",
-            )
-
-            planner_env: WorkerResponseEnvelope = await self._router.execute(
-                planner_req
-            )
-
-            if planner_env.status != TaskStatus.COMPLETED or not planner_env.response:
-                context.status = RunStage.FAILED
-                context.error = (
-                    planner_env.error.message
-                    if planner_env.error
-                    else "Planning phase failed"
-                )
-                context.duration_seconds = time.monotonic() - context.start_time
-                return
-
-            planned_subtasks = planner_env.response.output_data.get(
-                "planned_subtasks", []
-            )
-            raw_edges = planner_env.response.output_data.get("edges", [])
-            plan_id = planner_env.response.output_data.get("plan_id", f"plan_{run_id}")
-            context.plan_id = plan_id
-
-            # 2. Build SubtaskNodes and DependencyEdges from decomposition
-            nodes: dict[str, SubtaskNode] = {}
-            for st in planned_subtasks:
-                if isinstance(st, dict):
-                    node = SubtaskNode.model_validate(st)
-                elif isinstance(st, SubtaskNode):
-                    node = st
-                else:
-                    continue
-                nodes[node.subtask_id] = node
-
-            edges_list: list[DependencyEdge] = [
-                DependencyEdge.model_validate(e) if isinstance(e, dict) else e
-                for e in raw_edges
-            ]
-
-            # Ensure downstream synthesis -> verification -> evaluation -> reporting chain if not present
-            self._ensure_complete_research_mesh(nodes, edges_list, goal_query)
-
-            plan = ResearchPlan(
-                plan_id=plan_id,
-                run_id=run_id,
-                goal=context.goal,
-                nodes=nodes,
-                edges=tuple(edges_list),
-            )
-
-            # 3. Execute Research DAG with DAGExecutor and AgentWorkerRouter
-            context.status = RunStage.RESEARCHING
-            executor = DAGExecutor(
-                max_concurrency=self._max_concurrency,
-                worker_registry=self._router,
-                checkpoint_repo=context.checkpoint_repo,
-                event_sink=context.event_sink,
-            )
-
-            result: ExecutionResult = await executor.execute_plan(
-                plan=plan, cancellation_token=context.cancellation_token
-            )
-
-            # 4. Record Results
-            context.status = result.status
-            context.completed_task_ids = list(result.completed_task_ids)
-            context.failed_task_ids = list(result.failed_task_ids)
-            context.cancelled_task_ids = list(result.cancelled_task_ids)
-            context.total_token_usage = result.total_token_usage
-            context.duration_seconds = time.monotonic() - context.start_time
-            context.error = result.error
-
-            # 5. Extract final ResearchDossier if available
-            for task_id in reversed(result.completed_task_ids):
-                output = result.task_outputs.get(task_id, {})
-                if (
-                    isinstance(output, dict)
-                    and "dossier_id" in output
-                    and "markdown_report" in output
-                ):
-                    context.dossier = ResearchDossier.model_validate(output)
-                    break
-
-        except Exception as e:
-            context.status = RunStage.FAILED
-            context.error = str(e)
-            context.duration_seconds = time.monotonic() - context.start_time
-
-    def _resolve_role_for_task(self, task_type: TaskType) -> AgentRole:
-        """Map TaskType to the canonical responsible AgentRole."""
-        if task_type == TaskType.DECOMPOSITION:
-            return AgentRole.PLANNER
-        if task_type in (
-            TaskType.WEB_SEARCH,
-            TaskType.ACADEMIC_SEARCH,
-            TaskType.DOC_ANALYSIS,
-        ):
-            return AgentRole.RESEARCHER
-        if task_type == TaskType.SYNTHESIS:
-            return AgentRole.ANALYST
-        if task_type in (TaskType.VERIFICATION, TaskType.CONFLICT_DETECTION):
-            return AgentRole.VERIFIER
-        if task_type == TaskType.EVALUATION:
-            return AgentRole.EVALUATOR
-        if task_type == TaskType.REPORTING:
-            return AgentRole.REPORTER
-        return AgentRole.RESEARCHER
-
-    def _ensure_complete_research_mesh(
-        self,
-        nodes: dict[str, SubtaskNode],
-        edges: list[DependencyEdge],
-        goal_query: str,
-    ) -> None:
-        """Guarantee the DAG includes synthesis, verification, evaluation, and reporting nodes."""
-        research_ids = [
-            nid
-            for nid, n in nodes.items()
-            if n.task_type
-            in (
-                TaskType.WEB_SEARCH,
-                TaskType.ACADEMIC_SEARCH,
-                TaskType.DOC_ANALYSIS,
-            )
-        ]
-
-        if not any(n.task_type == TaskType.SYNTHESIS for n in nodes.values()):
-            an_id = "task_an_auto"
-            nodes[an_id] = SubtaskNode(
-                subtask_id=an_id,
-                task_type=TaskType.SYNTHESIS,
-                objective="Synthesize factual claims from evidence",
-                assigned_role=AgentRole.ANALYST,
-            )
-            for rid in research_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=rid, target_id=an_id, edge_type=EdgeType.DATA
-                    )
-                )
-
-        an_ids = [nid for nid, n in nodes.items() if n.task_type == TaskType.SYNTHESIS]
-
-        if not any(n.task_type == TaskType.VERIFICATION for n in nodes.values()):
-            ver_id = "task_ver_auto"
-            nodes[ver_id] = SubtaskNode(
-                subtask_id=ver_id,
-                task_type=TaskType.VERIFICATION,
-                objective="Verify claims and grounding",
-                assigned_role=AgentRole.VERIFIER,
-            )
-            for rid in research_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=rid, target_id=ver_id, edge_type=EdgeType.DATA
-                    )
-                )
-            for aid in an_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=aid, target_id=ver_id, edge_type=EdgeType.DATA
-                    )
-                )
-
-        ver_ids = [
-            nid for nid, n in nodes.items() if n.task_type == TaskType.VERIFICATION
-        ]
-
-        if not any(n.task_type == TaskType.EVALUATION for n in nodes.values()):
-            eval_id = "task_eval_auto"
-            nodes[eval_id] = SubtaskNode(
-                subtask_id=eval_id,
-                task_type=TaskType.EVALUATION,
-                objective="Evaluate research synthesis quality",
-                assigned_role=AgentRole.EVALUATOR,
-                input_context={"goal_query": goal_query},
-            )
-            for aid in an_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=aid,
-                        target_id=eval_id,
-                        edge_type=EdgeType.DATA,
-                    )
-                )
-            for vid in ver_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=vid,
-                        target_id=eval_id,
-                        edge_type=EdgeType.DATA,
-                    )
-                )
-
-        eval_ids = [
-            nid for nid, n in nodes.items() if n.task_type == TaskType.EVALUATION
-        ]
-
-        if not any(n.task_type == TaskType.REPORTING for n in nodes.values()):
-            rep_id = "task_rep_auto"
-            nodes[rep_id] = SubtaskNode(
-                subtask_id=rep_id,
-                task_type=TaskType.REPORTING,
-                objective="Compile publication-ready ResearchDossier",
-                assigned_role=AgentRole.REPORTER,
-                input_context={"goal_query": goal_query},
-            )
-            for aid in an_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=aid, target_id=rep_id, edge_type=EdgeType.DATA
-                    )
-                )
-            for vid in ver_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=vid, target_id=rep_id, edge_type=EdgeType.DATA
-                    )
-                )
-            for eid in eval_ids:
-                edges.append(
-                    DependencyEdge(
-                        source_id=eid, target_id=rep_id, edge_type=EdgeType.DATA
-                    )
-                )
 
 
 __all__ = ["ResearchService", "RunContext"]

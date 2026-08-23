@@ -1,4 +1,7 @@
-"""FastAPI application factory and middleware configuration."""
+"""FastAPI application factory and lifespan configuration."""
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +12,16 @@ from app.api.service import ResearchService
 
 
 def create_app(service: ResearchService | None = None) -> FastAPI:
-    """Construct and configure the ResearchMind FastAPI application instance."""
+    """Construct and configure the ResearchMind FastAPI application instance with clean lifespan."""
+    active_service = service or ResearchService()
+    set_global_service(active_service)
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        await active_service.start()
+        yield
+        await active_service.stop()
+
     app = FastAPI(
         title="ResearchMind API",
         description="Autonomous Asynchronous Research Agent Gateway",
@@ -17,7 +29,9 @@ def create_app(service: ResearchService | None = None) -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=_lifespan,
     )
+    app.state.research_service = active_service
 
     # Configure CORS for frontend and API consumers
     app.add_middleware(
@@ -27,10 +41,6 @@ def create_app(service: ResearchService | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Configure service backend
-    if service is not None:
-        set_global_service(service)
 
     # Attach router endpoints
     app.include_router(api_router)
