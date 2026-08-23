@@ -1,4 +1,6 @@
+import builtins
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -242,6 +244,14 @@ async def test_firestore_checkpoint_repo_save_and_load(
 
 def test_firestore_missing_dependency_error() -> None:
     """Test 4: Verify clear runtime error if google-cloud-firestore is uninstalled and no client is injected."""
-    repo = FirestoreRunRepository()
-    with pytest.raises(RuntimeError, match="google-cloud-firestore is required"):
-        repo._get_client()
+    orig_import = builtins.__import__
+
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if "firestore" in name:
+            raise ImportError("Mocked missing library")
+        return orig_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        repo = FirestoreRunRepository()
+        with pytest.raises(RuntimeError, match="google-cloud-firestore is required"):
+            repo._get_client()
