@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: researchmind-api
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - APP_ENV=production
+      - PORT=8080
+      - HOST=0.0.0.0
+      - LOG_LEVEL=INFO
+      - WORKER_CONCURRENCY=2
+      - MAX_ORCHESTRATION_CONCURRENCY=4
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ.get('PORT', 8080)}/healthz')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: researchmind-worker
+    command: ["python", "-m", "app.jobs.main"]
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+      - WORKER_CONCURRENCY=2
+      - MAX_ORCHESTRATION_CONCURRENCY=4
+    restart: unless-stopped

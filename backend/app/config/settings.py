@@ -48,6 +48,27 @@ class AppSettings(BaseSettings):
         alias="PORT",
         description="HTTP server port",
     )
+    worker_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=64,
+        alias="WORKER_CONCURRENCY",
+        description="Number of concurrent asynchronous job consumer workers",
+    )
+    max_orchestration_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        alias="MAX_ORCHESTRATION_CONCURRENCY",
+        description="Maximum parallel DAG subtask execution concurrency per run",
+    )
+    graceful_shutdown_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        alias="GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS",
+        description="Timeout in seconds for draining in-flight jobs during shutdown",
+    )
 
     # Gemini & AI Model Configuration
     gemini_api_key: str = Field(

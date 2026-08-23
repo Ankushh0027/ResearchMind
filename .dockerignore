@@ -1,0 +1,41 @@
+# Git and CI
+.git
+.gitignore
+.github
+
+# Python caches and bytecode
+__pycache__
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Environments and secrets
+.env
+.env.*
+*.env
+.venv
+venv
+ENV
+
+# Tests and documentation
+backend/tests
+tests
+docs
+*.md
+!README.md
+
+# Build and IDE artifacts
+backend/*.egg-info
+researchmind.egg-info
+build/
+dist/
+.idea
+.vscode
+.gemini
