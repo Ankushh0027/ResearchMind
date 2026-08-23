@@ -136,7 +136,17 @@ class AppSettings(BaseSettings):
         description="Pub/Sub topic for streaming workflow state and progress events",
     )
 
-    # Firestore State & Run Persistence
+    # Persistence & State Store Configuration
+    persistence_backend: Literal["in_memory", "firestore"] = Field(
+        default="in_memory",
+        alias="PERSISTENCE_BACKEND",
+        description="Active state and checkpoint persistence backend",
+    )
+    firestore_emulator_host: str | None = Field(
+        default=None,
+        alias="FIRESTORE_EMULATOR_HOST",
+        description="Host and port for local Firestore emulator (e.g. localhost:8080)",
+    )
     firestore_database: str = Field(
         default="(default)",
         alias="FIRESTORE_DATABASE",

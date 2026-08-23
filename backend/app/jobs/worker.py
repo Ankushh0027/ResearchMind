@@ -16,10 +16,19 @@ from app.jobs.protocols import (
     JobStatus,
     RunContextResolver,
 )
+from app.orchestration.cancellation import CancellationToken
 from app.orchestration.contracts import AgentRequest, WorkerResponseEnvelope
 from app.orchestration.executor import DAGExecutor, ExecutionResult
-from app.orchestration.protocols import WorkerProtocol
+from app.orchestration.protocols import CheckpointRepositoryProtocol, WorkerProtocol
 from app.orchestration.router import create_default_worker_router
+from app.orchestration.runtime import (
+    InMemoryCheckpointRepository,
+    InMemoryEventSink,
+)
+from app.persistence.protocols import (
+    RunContext,
+    RunRepositoryProtocol,
+)
 from app.state.models import (
     DependencyEdge,
     ResearchPlan,
@@ -34,15 +43,27 @@ class ResearchJobWorker(JobHandlerProtocol):
         self,
         router: WorkerProtocol | None = None,
         run_context_resolver: RunContextResolver | None = None,
+        run_repo: RunRepositoryProtocol | None = None,
+        checkpoint_repo: CheckpointRepositoryProtocol | None = None,
         max_concurrency: int = 4,
     ) -> None:
         self._router = router or create_default_worker_router()
         self._resolver = run_context_resolver
+        self._run_repo = run_repo
+        self._checkpoint_repo = checkpoint_repo
         self._max_concurrency = max_concurrency
 
     def set_run_context_resolver(self, resolver: RunContextResolver) -> None:
         """Configure or update the run context lookup function."""
         self._resolver = resolver
+
+    def set_run_repository(self, repo: RunRepositoryProtocol) -> None:
+        """Configure or update the durable RunRepository."""
+        self._run_repo = repo
+
+    def set_checkpoint_repository(self, repo: CheckpointRepositoryProtocol) -> None:
+        """Configure or update the CheckpointRepository."""
+        self._checkpoint_repo = repo
 
     async def handle_job(self, envelope: JobEnvelope) -> JobEnvelope:
         """Execute goal decomposition and research DAG for a given job envelope."""
@@ -65,14 +86,32 @@ class ResearchJobWorker(JobHandlerProtocol):
             )
 
         # 2. Resolve RunContext
-        if self._resolver is None:
-            return envelope.with_status(
-                JobStatus.FAILED,
-                error="RunContextResolver not configured on worker",
-                is_retryable=False,
-            )
+        context = self._resolver(run_id) if self._resolver is not None else None
 
-        context = self._resolver(run_id)
+        if context is None and self._run_repo is not None:
+            record = await self._run_repo.get_run(run_id)
+            if record is not None:
+                token = CancellationToken()
+                if record.is_cancelled:
+                    token.cancel(record.cancellation_reason or "Cancelled")
+                context = RunContext(
+                    run_id=record.run_id,
+                    goal=record.goal,
+                    cancellation_token=token,
+                    event_sink=InMemoryEventSink(),
+                    checkpoint_repo=self._checkpoint_repo
+                    or InMemoryCheckpointRepository(),
+                )
+                context.status = record.status
+                context.plan_id = record.plan_id
+                context.completed_task_ids = list(record.completed_task_ids)
+                context.failed_task_ids = list(record.failed_task_ids)
+                context.cancelled_task_ids = list(record.cancelled_task_ids)
+                context.total_token_usage = record.total_token_usage
+                context.duration_seconds = record.duration_seconds
+                context.dossier = record.dossier
+                context.error = record.error
+
         if context is None:
             return envelope.with_status(
                 JobStatus.FAILED,
@@ -80,13 +119,34 @@ class ResearchJobWorker(JobHandlerProtocol):
                 is_retryable=False,
             )
 
+        async def _sync_to_repo() -> None:
+            if self._run_repo is not None and context is not None:
+                existing = await self._run_repo.get_run(run_id)
+                if existing is not None:
+                    await self._run_repo.update_run(
+                        existing.with_updates(
+                            status=context.status,
+                            plan_id=context.plan_id,
+                            completed_task_ids=context.completed_task_ids,
+                            failed_task_ids=context.failed_task_ids,
+                            cancelled_task_ids=context.cancelled_task_ids,
+                            total_token_usage=context.total_token_usage,
+                            duration_seconds=context.duration_seconds,
+                            dossier=context.dossier,
+                            error=context.error,
+                            is_cancelled=context.cancellation_token.is_cancelled,
+                        )
+                    )
+
         # 3. Check for early cancellation
         if context.cancellation_token.is_cancelled:
             context.status = RunStage.CANCELLED
             context.duration_seconds = time.monotonic() - context.start_time
+            await _sync_to_repo()
             return envelope.with_status(JobStatus.CANCELLED)
 
         context.status = RunStage.PLANNING
+        await _sync_to_repo()
 
         try:
             # 4. PlannerWorker Decomposes the Goal
@@ -120,6 +180,7 @@ class ResearchJobWorker(JobHandlerProtocol):
                 context.status = RunStage.FAILED
                 context.error = err_msg
                 context.duration_seconds = time.monotonic() - context.start_time
+                await _sync_to_repo()
                 return envelope.with_status(
                     JobStatus.FAILED, error=err_msg, is_retryable=is_ret
                 )
@@ -162,10 +223,13 @@ class ResearchJobWorker(JobHandlerProtocol):
             if context.cancellation_token.is_cancelled:
                 context.status = RunStage.CANCELLED
                 context.duration_seconds = time.monotonic() - context.start_time
+                await _sync_to_repo()
                 return envelope.with_status(JobStatus.CANCELLED)
 
             # 7. Execute DAG with DAGExecutor and AgentWorkerRouter
             context.status = RunStage.RESEARCHING
+            await _sync_to_repo()
+
             executor = DAGExecutor(
                 max_concurrency=self._max_concurrency,
                 worker_registry=self._router,
@@ -187,6 +251,7 @@ class ResearchJobWorker(JobHandlerProtocol):
             context.error = result.error
 
             if result.status == RunStage.CANCELLED:
+                await _sync_to_repo()
                 return envelope.with_status(JobStatus.CANCELLED)
 
             if result.status == RunStage.COMPLETED:
@@ -201,9 +266,11 @@ class ResearchJobWorker(JobHandlerProtocol):
                         context.dossier = ResearchDossier.model_validate(output)
                         break
 
+                await _sync_to_repo()
                 return envelope.with_status(JobStatus.COMPLETED)
 
             # Execution resulted in FAILED stage
+            await _sync_to_repo()
             return envelope.with_status(
                 JobStatus.FAILED,
                 error=result.error or "DAG execution failed",
@@ -214,6 +281,7 @@ class ResearchJobWorker(JobHandlerProtocol):
             context.status = RunStage.FAILED
             context.error = str(e)
             context.duration_seconds = time.monotonic() - context.start_time
+            await _sync_to_repo()
             return envelope.with_status(
                 JobStatus.FAILED, error=str(e), is_retryable=True
             )
