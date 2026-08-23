@@ -98,6 +98,33 @@ class ContradictionItem(BaseModel):
     divergence_analysis: str = Field(
         ..., min_length=1, description="Analysis of why sources disagree"
     )
+    run_id: str | None = Field(
+        default=None, description="Associated research run ID for tenant isolation"
+    )
+    conflicting_evidence_ids: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="IDs of evidence records underlying the contradictory claims",
+    )
+    severity_score: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Severity or confidence of the contradiction [0.0 - 1.0]",
+    )
+    is_untrusted: bool = Field(
+        default=False,
+        description="Flag indicating if any conflicting claim originates from untrusted sources",
+    )
+    is_quarantined: bool = Field(
+        default=False,
+        description="Flag indicating if any conflicting claim originates from quarantined sources",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Contextual contradiction metadata"
+    )
+    created_at: datetime = Field(
+        default_factory=_utc_now, description="Creation timestamp"
+    )
 
 
 class EvaluationRubricScore(BaseModel):

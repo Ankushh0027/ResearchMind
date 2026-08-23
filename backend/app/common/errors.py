@@ -426,3 +426,29 @@ class UngroundedFindingError(AnalysisError):
         )
         self.finding_title = finding_title
         self.reason = reason
+
+
+class ContradictionDetectionError(ResearchMindError):
+    """Base domain exception for contradiction and conflict detection errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "CONTRADICTION_DETECTION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code
+
+
+class InvalidContradictionError(ContradictionDetectionError):
+    """Raised when contradiction detection parameters or inputs are invalid."""
+
+    def __init__(
+        self,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, code="INVALID_CONTRADICTION", details=details)

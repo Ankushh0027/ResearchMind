@@ -13,6 +13,12 @@ from app.intelligence.claims import (
     ExtractedClaim,
     generate_claim_id,
 )
+from app.intelligence.contradiction import (
+    ContradictionDetectionResult,
+    ContradictionDetector,
+    ContradictionDetectorProtocol,
+    generate_contradiction_id,
+)
 from app.intelligence.evidence import (
     EvidenceRecord,
     SourceProvenance,
@@ -58,6 +64,9 @@ __all__ = [
     "ClaimExtractionResult",
     "ClaimExtractorProtocol",
     "ContentBoundarySanitizer",
+    "ContradictionDetectionResult",
+    "ContradictionDetector",
+    "ContradictionDetectorProtocol",
     "ContradictionItem",
     "DeterministicClaimExtractor",
     "EvaluationReport",
@@ -83,6 +92,7 @@ __all__ = [
     "VectorMemoryProtocol",
     "compute_sha256_hash",
     "generate_claim_id",
+    "generate_contradiction_id",
     "generate_evidence_id",
     "generate_finding_id",
     "generate_source_id",
