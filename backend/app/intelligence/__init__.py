@@ -7,6 +7,11 @@ from app.intelligence.evidence import (
     generate_evidence_id,
     generate_source_id,
 )
+from app.intelligence.ingestion import (
+    EvidenceIngestionPipeline,
+    IngestionResult,
+    RawDocument,
+)
 from app.intelligence.models import (
     CitationReference,
     ContradictionItem,
@@ -39,7 +44,9 @@ __all__ = [
     "ContradictionItem",
     "EvaluationReport",
     "EvaluationRubricScore",
+    "EvidenceIngestionPipeline",
     "EvidenceRecord",
+    "IngestionResult",
     "KeyFinding",
     "LLMClientProtocol",
     "MAX_RAW_TEXT_BYTES",
@@ -48,6 +55,7 @@ __all__ = [
     "PlannerAgent",
     "PlannerError",
     "REDACTED_REPLACEMENT",
+    "RawDocument",
     "ResearchDossier",
     "SearchClientProtocol",
     "SourceProvenance",

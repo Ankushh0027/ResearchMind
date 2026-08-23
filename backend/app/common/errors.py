@@ -285,3 +285,69 @@ class EmptyVectorQueryError(RAGError):
         self, message: str = "Query vector must not be empty or zero-norm"
     ) -> None:
         super().__init__(message)
+
+
+class EvidenceIngestionError(ResearchMindError):
+    """Base domain exception for evidence ingestion pipeline errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "INGESTION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code
+
+
+class InvalidSourceURLError(EvidenceIngestionError):
+    """Raised when an evidence source URL or DOI URI is invalid or uses a disallowed scheme."""
+
+    def __init__(
+        self,
+        source_url: str,
+        reason: str = "Invalid or disallowed URI scheme",
+    ) -> None:
+        super().__init__(
+            f"Invalid source URL '{source_url}': {reason}",
+            code="INVALID_URI_SCHEME",
+            details={"source_url": source_url, "reason": reason},
+        )
+        self.source_url = source_url
+        self.reason = reason
+
+
+class OversizedContentError(EvidenceIngestionError):
+    """Raised when evidence content exceeds the maximum allowed payload byte size."""
+
+    def __init__(
+        self,
+        byte_count: int,
+        max_bytes: int,
+    ) -> None:
+        super().__init__(
+            f"Evidence content size ({byte_count} bytes) exceeds limit ({max_bytes} bytes)",
+            code="OVERSIZED_CONTENT",
+            details={"byte_count": byte_count, "max_bytes": max_bytes},
+        )
+        self.byte_count = byte_count
+        self.max_bytes = max_bytes
+
+
+class DuplicateEvidenceError(EvidenceIngestionError):
+    """Raised when duplicate evidence is encountered in strict ingestion mode."""
+
+    def __init__(
+        self,
+        content_hash: str,
+        run_id: str,
+    ) -> None:
+        super().__init__(
+            f"Duplicate evidence detected for hash '{content_hash}' in run '{run_id}'",
+            code="DUPLICATE_EVIDENCE",
+            details={"content_hash": content_hash, "run_id": run_id},
+        )
+        self.content_hash = content_hash
+        self.run_id = run_id

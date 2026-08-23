@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from app.adapters.llm.base import LLMClientProtocol
 from app.adapters.search.base import SearchClientProtocol
-from app.common.evidence import EvidenceRecord
+from app.intelligence.evidence import EvidenceRecord
 
 
 @runtime_checkable
