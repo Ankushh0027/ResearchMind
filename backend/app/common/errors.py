@@ -351,3 +351,46 @@ class DuplicateEvidenceError(EvidenceIngestionError):
         )
         self.content_hash = content_hash
         self.run_id = run_id
+
+
+class ClaimExtractionError(ResearchMindError):
+    """Base domain exception for claim extraction and factual analysis errors."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "CLAIM_EXTRACTION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = code
+        super().__init__(message, merged_details)
+        self.code = code
+
+
+class UngroundedClaimError(ClaimExtractionError):
+    """Raised when an extracted claim lacks supporting evidence backlinks."""
+
+    def __init__(
+        self,
+        claim_statement: str,
+        reason: str = "Claim has no supporting evidence IDs",
+    ) -> None:
+        super().__init__(
+            f"Ungrounded claim: '{claim_statement}' - {reason}",
+            code="UNGROUNDED_CLAIM",
+            details={"claim_statement": claim_statement, "reason": reason},
+        )
+        self.claim_statement = claim_statement
+        self.reason = reason
+
+
+class InvalidClaimError(ClaimExtractionError):
+    """Raised when claim parameters or confidence scores are invalid."""
+
+    def __init__(
+        self,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, code="INVALID_CLAIM", details=details)
