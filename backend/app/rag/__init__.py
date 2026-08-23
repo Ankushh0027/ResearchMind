@@ -13,6 +13,16 @@ from app.rag.embeddings import (
     generate_embedding_id,
     validate_dense_vector,
 )
+from app.rag.errors import (
+    CollectionNotFoundError,
+    EmptyVectorQueryError,
+    RAGError,
+    VectorDimensionMismatchError,
+)
+from app.rag.memory import (
+    DEFAULT_COLLECTION_NAME,
+    VectorMemory,
+)
 from app.rag.protocols import (
     EmbeddingModelProtocol,
     VectorPoint,
@@ -26,18 +36,24 @@ from app.rag.store import (
 )
 
 __all__ = [
+    "CollectionNotFoundError",
     "DEFAULT_CHUNK_OVERLAP",
     "DEFAULT_CHUNK_SIZE",
+    "DEFAULT_COLLECTION_NAME",
     "DEFAULT_EMBEDDING_DIMENSION",
     "DEFAULT_MAX_CHUNKS",
     "DEFAULT_STORE_DIMENSION",
     "DeterministicTextChunker",
     "EmbeddingModelProtocol",
     "EmbeddingRecord",
+    "EmptyVectorQueryError",
     "InMemoryVectorStore",
     "MockEmbeddingModel",
+    "RAGError",
     "TextChunk",
     "TextChunker",
+    "VectorDimensionMismatchError",
+    "VectorMemory",
     "VectorPoint",
     "VectorSearchResult",
     "VectorStoreProtocol",
