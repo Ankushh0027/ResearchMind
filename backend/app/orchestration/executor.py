@@ -440,9 +440,27 @@ class DAGExecutor:
 
                 # Merge node input_context with upstream outputs from completed dependencies
                 merged_input_data = dict(node.input_context)
+                if (
+                    node.search_queries
+                    and "queries" not in merged_input_data
+                    and "search_queries" not in merged_input_data
+                ):
+                    merged_input_data["search_queries"] = list(node.search_queries)
+
                 if task_outputs is not None:
-                    prerequisites = scheduler._dag.node_dependencies.get(subtask_id, ())
-                    for p_id in prerequisites:
+                    ancestors: set[str] = set()
+                    to_visit = list(
+                        scheduler._dag.node_dependencies.get(subtask_id, ())
+                    )
+                    while to_visit:
+                        curr = to_visit.pop()
+                        if curr not in ancestors:
+                            ancestors.add(curr)
+                            to_visit.extend(
+                                scheduler._dag.node_dependencies.get(curr, ())
+                            )
+
+                    for p_id in sorted(ancestors):
                         if p_id in task_outputs:
                             p_out = task_outputs[p_id]
                             if isinstance(p_out, dict):
