@@ -234,3 +234,54 @@ class EvidenceValidationError(ResearchMindError):
 
     def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         super().__init__(message, details)
+
+
+class RAGError(ResearchMindError):
+    """Base domain exception for RAG memory, vector storage, and embedding errors."""
+
+    pass
+
+
+class VectorDimensionMismatchError(RAGError):
+    """Raised when a vector dimension does not match the configured store or model dimension."""
+
+    def __init__(
+        self,
+        expected_dimension: int,
+        actual_dimension: int,
+        entity_id: str | None = None,
+    ) -> None:
+        msg = f"Vector dimension mismatch: expected {expected_dimension}, got {actual_dimension}"
+        if entity_id:
+            msg += f" for entity '{entity_id}'"
+        super().__init__(
+            msg,
+            {
+                "expected_dimension": expected_dimension,
+                "actual_dimension": actual_dimension,
+                "entity_id": entity_id,
+            },
+        )
+        self.expected_dimension = expected_dimension
+        self.actual_dimension = actual_dimension
+        self.entity_id = entity_id
+
+
+class CollectionNotFoundError(RAGError):
+    """Raised when an operation targets a non-existent vector collection."""
+
+    def __init__(self, collection_name: str) -> None:
+        super().__init__(
+            f"Vector collection '{collection_name}' not found",
+            {"collection_name": collection_name},
+        )
+        self.collection_name = collection_name
+
+
+class EmptyVectorQueryError(RAGError):
+    """Raised when an empty or zero-norm query vector is submitted."""
+
+    def __init__(
+        self, message: str = "Query vector must not be empty or zero-norm"
+    ) -> None:
+        super().__init__(message)
