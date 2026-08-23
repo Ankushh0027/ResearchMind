@@ -38,6 +38,12 @@ from app.orchestration.retry import (
     SleeperType,
     default_async_sleeper,
 )
+from app.orchestration.router import (
+    ROLE_TASK_COMPATIBILITY,
+    TASK_REQUIRED_PERMISSIONS,
+    AgentWorkerRouter,
+    create_default_worker_router,
+)
 from app.orchestration.runtime import (
     InMemoryCheckpointRepository,
     InMemoryEventSink,
@@ -56,6 +62,7 @@ __all__ = [
     "AgentError",
     "AgentRequest",
     "AgentResponse",
+    "AgentWorkerRouter",
     "CancellationToken",
     "CheckpointRepositoryProtocol",
     "DAGExecutor",
@@ -70,12 +77,14 @@ __all__ = [
     "MockWorker",
     "MockWorkerBehavior",
     "ObservabilityHooksProtocol",
+    "ROLE_TASK_COMPATIBILITY",
     "RetryPolicy",
     "RunCancelledEvent",
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",
     "SleeperType",
+    "TASK_REQUIRED_PERMISSIONS",
     "TaskCancelledEvent",
     "TaskCompletedEvent",
     "TaskDispatchPayload",
@@ -87,5 +96,6 @@ __all__ = [
     "WorkerProtocol",
     "WorkerRegistry",
     "WorkerResponseEnvelope",
+    "create_default_worker_router",
     "default_async_sleeper",
 ]

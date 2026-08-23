@@ -38,6 +38,7 @@ from app.orchestration.protocols import (
     CheckpointRepositoryProtocol,
     EventSinkProtocol,
     ObservabilityHooksProtocol,
+    WorkerProtocol,
 )
 from app.orchestration.retry import (
     RetryPolicy,
@@ -91,7 +92,7 @@ class DAGExecutor:
     def __init__(
         self,
         max_concurrency: int = 5,
-        worker_registry: WorkerRegistry | None = None,
+        worker_registry: WorkerRegistry | WorkerProtocol | None = None,
         retry_policy: RetryPolicy | None = None,
         checkpoint_repo: CheckpointRepositoryProtocol | None = None,
         event_sink: EventSinkProtocol | None = None,
@@ -259,6 +260,7 @@ class DAGExecutor:
                             scheduler=scheduler,
                             semaphore=semaphore,
                             token=token,
+                            task_outputs=task_outputs,
                         )
                     )
                     running_tasks[node.subtask_id] = task_future
@@ -384,10 +386,21 @@ class DAGExecutor:
         scheduler: DAGScheduler,
         semaphore: asyncio.Semaphore,
         token: CancellationToken,
+        task_outputs: dict[str, Any] | None = None,
     ) -> WorkerResponseEnvelope:
         """Execute a subtask with retry backoff, timeouts, and lifecycle event tracking."""
         subtask_id = node.subtask_id
-        worker = self.worker_registry.get_worker(node.assigned_role)
+        if isinstance(self.worker_registry, WorkerRegistry):
+            worker: WorkerProtocol = self.worker_registry.get_worker(node.assigned_role)
+        elif isinstance(self.worker_registry, WorkerProtocol):
+            worker = self.worker_registry
+        else:
+            worker = getattr(
+                self.worker_registry,
+                "get_worker",
+                lambda _r: self.worker_registry,
+            )(node.assigned_role)
+
         attempt = 1
         max_attempts = node.max_retries
 
@@ -407,7 +420,11 @@ class DAGExecutor:
                     )
 
                 # Transition to IN_PROGRESS
-                worker_id = getattr(worker, "worker_id", "worker-default")
+                worker_id = getattr(
+                    worker,
+                    "worker_id",
+                    getattr(worker, "router_id", f"{node.assigned_role.value}-worker"),
+                )
                 scheduler.mark_started(subtask_id, worker_id, attempt)
                 await self._emit_event(
                     TaskStartedEvent(
@@ -421,6 +438,64 @@ class DAGExecutor:
                     plan.run_id, subtask_id, attempt
                 )
 
+                # Merge node input_context with upstream outputs from completed dependencies
+                merged_input_data = dict(node.input_context)
+                if task_outputs is not None:
+                    prerequisites = scheduler._dag.node_dependencies.get(subtask_id, ())
+                    for p_id in prerequisites:
+                        if p_id in task_outputs:
+                            p_out = task_outputs[p_id]
+                            if isinstance(p_out, dict):
+                                for list_key in (
+                                    "evidence_records",
+                                    "claims",
+                                    "findings",
+                                    "key_findings",
+                                    "citations",
+                                    "contradictions",
+                                ):
+                                    if list_key in p_out and isinstance(
+                                        p_out[list_key], list
+                                    ):
+                                        target_key = (
+                                            "findings"
+                                            if list_key == "key_findings"
+                                            else list_key
+                                        )
+                                        if target_key not in merged_input_data:
+                                            merged_input_data[target_key] = []
+                                        elif not isinstance(
+                                            merged_input_data[target_key], list
+                                        ):
+                                            merged_input_data[target_key] = [
+                                                merged_input_data[target_key]
+                                            ]
+                                        for item in p_out[list_key]:
+                                            if (
+                                                item
+                                                not in merged_input_data[target_key]
+                                            ):
+                                                merged_input_data[target_key].append(
+                                                    item
+                                                )
+                                for obj_key in (
+                                    "evaluation",
+                                    "evaluation_report",
+                                    "verification_result",
+                                    "queries",
+                                    "goal_query",
+                                ):
+                                    if (
+                                        obj_key in p_out
+                                        and obj_key not in merged_input_data
+                                    ):
+                                        target_key = (
+                                            "evaluation"
+                                            if obj_key == "evaluation_report"
+                                            else obj_key
+                                        )
+                                        merged_input_data[target_key] = p_out[obj_key]
+
                 idempotency_key = f"idem_{plan.run_id}_{subtask_id}_att{attempt}"
                 request = AgentRequest(
                     request_id=f"req_{uuid.uuid4().hex[:12]}",
@@ -429,7 +504,7 @@ class DAGExecutor:
                     agent_role=node.assigned_role,
                     task_type=node.task_type,
                     goal_context=plan.goal.query,
-                    input_data=node.input_context,
+                    input_data=merged_input_data,
                     idempotency_key=idempotency_key,
                     attempt_number=attempt,
                 )
