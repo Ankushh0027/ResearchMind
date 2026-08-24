@@ -6,12 +6,16 @@ from app.adapters.llm.base import (
     LLMResponse,
     ToolCall,
 )
+from app.adapters.llm.factory import create_llm_client
+from app.adapters.llm.gemini import GeminiLLMClient
 from app.adapters.llm.mock_llm import MockLLMClient
 
 __all__ = [
+    "GeminiLLMClient",
     "LLMClientProtocol",
     "LLMRequest",
     "LLMResponse",
     "MockLLMClient",
     "ToolCall",
+    "create_llm_client",
 ]

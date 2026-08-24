@@ -72,6 +72,16 @@ class AppSettings(BaseSettings):
     )
 
     # Gemini & AI Model Configuration
+    llm_provider: Literal["in_memory", "mock", "gemini"] = Field(
+        default="in_memory",
+        alias="LLM_PROVIDER",
+        description="Active LLM provider backend (in_memory/mock or gemini)",
+    )
+    embedding_provider: Literal["in_memory", "mock", "gemini"] = Field(
+        default="in_memory",
+        alias="EMBEDDING_PROVIDER",
+        description="Active Embedding provider backend (in_memory/mock or gemini)",
+    )
     gemini_api_key: str = Field(
         default="",
         alias="GEMINI_API_KEY",
@@ -94,13 +104,37 @@ class AppSettings(BaseSettings):
     )
     gemini_temperature: float = Field(
         default=0.2,
+        ge=0.0,
+        le=2.0,
         alias="GEMINI_TEMPERATURE",
         description="Sampling temperature for deterministic agent reasoning",
     )
     gemini_max_output_tokens: int = Field(
         default=8192,
+        gt=0,
         alias="GEMINI_MAX_OUTPUT_TOKENS",
         description="Maximum tokens allowed in model responses",
+    )
+    gemini_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        alias="GEMINI_MAX_RETRIES",
+        description="Maximum retry attempts on transient Gemini API errors",
+    )
+    gemini_initial_retry_delay_seconds: float = Field(
+        default=1.0,
+        ge=0.01,
+        le=60.0,
+        alias="GEMINI_INITIAL_RETRY_DELAY_SECONDS",
+        description="Initial delay in seconds before exponential retry backoff",
+    )
+    gemini_max_retry_delay_seconds: float = Field(
+        default=10.0,
+        ge=0.1,
+        le=300.0,
+        alias="GEMINI_MAX_RETRY_DELAY_SECONDS",
+        description="Maximum delay in seconds between retry attempts",
     )
 
     # Google Cloud Platform Configuration

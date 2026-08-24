@@ -1,5 +1,5 @@
 import uuid
-from typing import Final
+from typing import Any, Final
 
 from app.common.enums import AgentRole, TaskStatus, TaskType, ToolPermission
 from app.common.errors import (
@@ -251,16 +251,23 @@ def create_default_worker_router(
     evaluator_worker: WorkerProtocol | None = None,
     reporter_worker: WorkerProtocol | None = None,
     cancellation_token: CancellationToken | None = None,
+    settings: Any = None,
 ) -> AgentWorkerRouter:
     """Instantiate and populate an AgentWorkerRouter with all default specialized agent workers."""
+    from app.adapters.llm.factory import create_llm_client
     from app.agents.analyst.worker import AnalystWorker
     from app.agents.evaluator.worker import EvaluatorWorker
     from app.agents.planner.worker import PlannerWorker
     from app.agents.reporter.worker import ReporterWorker
     from app.agents.researcher.worker import ResearcherWorker
     from app.agents.verifier.worker import VerifierWorker
+    from app.intelligence.planner import PlannerAgent
 
     router = AgentWorkerRouter(cancellation_token=cancellation_token)
+
+    if planner_worker is None and settings is not None:
+        llm = create_llm_client(settings=settings)
+        planner_worker = PlannerWorker(planner_agent=PlannerAgent(llm_client=llm))
 
     router.register_worker(
         planner_worker or PlannerWorker(),

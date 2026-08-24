@@ -29,6 +29,7 @@ dependencies = [
     "uvicorn>=0.28.0",
     "google-cloud-firestore>=2.15.0",
     "google-cloud-pubsub>=2.20.0",
+    "google-genai>=0.1.0",
 ]
 
 [project.optional-dependencies]

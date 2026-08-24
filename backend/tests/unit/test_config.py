@@ -88,3 +88,45 @@ def test_invalid_job_transport_validation(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("JOB_TRANSPORT", "kafka_unsupported")
     with pytest.raises(ValidationError):
         AppSettings()
+
+
+def test_llm_and_embedding_settings_and_environment_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify LLM and embedding configuration fields and environment overrides."""
+    default_settings = AppSettings()
+    assert default_settings.llm_provider == "in_memory"
+    assert default_settings.embedding_provider == "in_memory"
+    assert default_settings.gemini_model == "gemini-2.5-pro"
+    assert default_settings.gemini_fast_model == "gemini-2.5-flash"
+    assert default_settings.gemini_embedding_model == "text-embedding-004"
+    assert default_settings.gemini_temperature == 0.2
+    assert default_settings.gemini_max_output_tokens == 8192
+    assert default_settings.gemini_max_retries == 3
+    assert default_settings.gemini_initial_retry_delay_seconds == 1.0
+    assert default_settings.gemini_max_retry_delay_seconds == 10.0
+
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "env-test-key-12345")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-custom-pro")
+    monkeypatch.setenv("GEMINI_FAST_MODEL", "gemini-custom-flash")
+    monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "custom-embedding-001")
+    monkeypatch.setenv("GEMINI_TEMPERATURE", "0.7")
+    monkeypatch.setenv("GEMINI_MAX_OUTPUT_TOKENS", "4096")
+    monkeypatch.setenv("GEMINI_MAX_RETRIES", "5")
+    monkeypatch.setenv("GEMINI_INITIAL_RETRY_DELAY_SECONDS", "0.5")
+    monkeypatch.setenv("GEMINI_MAX_RETRY_DELAY_SECONDS", "20.0")
+
+    custom = AppSettings()
+    assert custom.llm_provider == "gemini"
+    assert custom.embedding_provider == "gemini"
+    assert custom.gemini_api_key == "env-test-key-12345"
+    assert custom.gemini_model == "gemini-custom-pro"
+    assert custom.gemini_fast_model == "gemini-custom-flash"
+    assert custom.gemini_embedding_model == "custom-embedding-001"
+    assert custom.gemini_temperature == 0.7
+    assert custom.gemini_max_output_tokens == 4096
+    assert custom.gemini_max_retries == 5
+    assert custom.gemini_initial_retry_delay_seconds == 0.5
+    assert custom.gemini_max_retry_delay_seconds == 20.0
