@@ -29,9 +29,7 @@ def _create_publisher_client(
     """Instantiate Google Cloud Pub/Sub PublisherClient with emulator support."""
     _ = project_id
     try:
-        from google.cloud import (
-            pubsub_v1,  # type: ignore[import-untyped, import-not-found, unused-ignore]
-        )
+        from google.cloud import pubsub_v1
 
         if emulator_host:
             import os
@@ -52,9 +50,7 @@ def _create_subscriber_client(
     """Instantiate Google Cloud Pub/Sub SubscriberClient with emulator support."""
     _ = project_id
     try:
-        from google.cloud import (
-            pubsub_v1,  # type: ignore[import-untyped, import-not-found, unused-ignore]
-        )
+        from google.cloud import pubsub_v1
 
         if emulator_host:
             import os
