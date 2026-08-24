@@ -191,23 +191,20 @@ async def test_e2e_pubsub_transport_execution() -> None:
         FakeSubscriberClient,
     )
 
-    pub_client = FakePublisherClient()
     sub_client = FakeSubscriberClient()
 
-    # Bridge publisher output to subscriber queue
-    original_publish = pub_client.publish
-
-    def bridging_publish(topic: str, data: bytes, **attributes: str) -> Any:
-        fut = original_publish(topic, data, **attributes)
-        msg_id = fut.result()
-        sub_client.queue.append(
-            FakeReceivedMessage(
-                ack_id=f"ack_{msg_id}", data=data, attributes=attributes
+    class BridgedFakePublisherClient(FakePublisherClient):
+        def publish(self, topic: str, data: bytes, **attributes: str) -> Any:
+            fut = super().publish(topic, data, **attributes)
+            msg_id = fut.result()
+            sub_client.queue.append(
+                FakeReceivedMessage(
+                    ack_id=f"ack_{msg_id}", data=data, attributes=attributes
+                )
             )
-        )
-        return fut
+            return fut
 
-    pub_client.publish = bridging_publish  # type: ignore[method-assign]
+    pub_client = BridgedFakePublisherClient()
 
     publisher = GooglePubSubPublisher(
         client=pub_client,
