@@ -95,7 +95,20 @@ no_implicit_optional = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["tests.*", "hypothesis.*", "hypothesis", "google.*", "google.cloud.*"]
+module = [
+    "tests.*",
+    "hypothesis.*",
+    "hypothesis",
+    "google.*",
+    "google.cloud.*",
+    "google.auth.*",
+    "google.api_core.*",
+    "google.protobuf.*",
+    "grpc.*",
+    "grpc",
+    "proto.*",
+    "proto",
+]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_decorators = false
