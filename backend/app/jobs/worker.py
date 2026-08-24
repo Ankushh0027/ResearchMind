@@ -138,8 +138,14 @@ class ResearchJobWorker(JobHandlerProtocol):
                         )
                     )
 
-        # 3. Check for early cancellation
-        if context.cancellation_token.is_cancelled:
+        # 3. Check for already completed or cancelled run (Idempotent At-Least-Once Delivery Protection)
+        if context.status == RunStage.COMPLETED:
+            return envelope.with_status(JobStatus.COMPLETED)
+
+        if (
+            context.status == RunStage.CANCELLED
+            or context.cancellation_token.is_cancelled
+        ):
             context.status = RunStage.CANCELLED
             context.duration_seconds = time.monotonic() - context.start_time
             await _sync_to_repo()

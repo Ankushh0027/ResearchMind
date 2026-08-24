@@ -14,11 +14,11 @@ from app.api.schemas import (
     RunSummaryResponse,
 )
 from app.common.enums import RunStage
-from app.jobs.in_memory import (
-    InMemoryJobConsumer,
-    InMemoryJobPublisher,
-    InMemoryJobQueue,
+from app.jobs.factory import (
+    create_job_consumer,
+    create_job_publisher,
 )
+from app.jobs.in_memory import InMemoryJobQueue
 from app.jobs.protocols import (
     JobConsumerProtocol,
     JobEnvelope,
@@ -69,35 +69,22 @@ class ResearchService:
         self._runs: dict[str, RunContext] = {}
         self._lock = asyncio.Lock()
 
-        if publisher is None or consumer is None:
-            queue = InMemoryJobQueue()
-            self._worker = worker or ResearchJobWorker(
-                router=self._router,
-                run_context_resolver=self._get_run_context,
-                run_repo=self._run_repo,
-                checkpoint_repo=self._checkpoint_repo,
-                max_concurrency=self._max_concurrency,
-            )
-            self._worker.set_run_context_resolver(self._get_run_context)
-            self._worker.set_run_repository(self._run_repo)
-            self._worker.set_checkpoint_repository(self._checkpoint_repo)
-            self._publisher = publisher or InMemoryJobPublisher(queue)
-            self._consumer = consumer or InMemoryJobConsumer(
-                queue=queue, handler=self._worker, worker_concurrency=2
-            )
-        else:
-            self._publisher = publisher
-            self._consumer = consumer
-            self._worker = worker or ResearchJobWorker(
-                router=self._router,
-                run_context_resolver=self._get_run_context,
-                run_repo=self._run_repo,
-                checkpoint_repo=self._checkpoint_repo,
-                max_concurrency=self._max_concurrency,
-            )
-            self._worker.set_run_context_resolver(self._get_run_context)
-            self._worker.set_run_repository(self._run_repo)
-            self._worker.set_checkpoint_repository(self._checkpoint_repo)
+        self._worker = worker or ResearchJobWorker(
+            router=self._router,
+            run_context_resolver=self._get_run_context,
+            run_repo=self._run_repo,
+            checkpoint_repo=self._checkpoint_repo,
+            max_concurrency=self._max_concurrency,
+        )
+        self._worker.set_run_context_resolver(self._get_run_context)
+        self._worker.set_run_repository(self._run_repo)
+        self._worker.set_checkpoint_repository(self._checkpoint_repo)
+
+        queue = InMemoryJobQueue() if (publisher is None or consumer is None) else None
+        self._publisher = publisher or create_job_publisher(queue=queue)
+        self._consumer = consumer or create_job_consumer(
+            handler=self._worker, queue=queue
+        )
 
     @property
     def run_repository(self) -> RunRepositoryProtocol:

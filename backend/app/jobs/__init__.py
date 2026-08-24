@@ -1,5 +1,9 @@
 """Asynchronous job processing, pub/sub abstractions, and worker gateway."""
 
+from app.jobs.factory import (
+    create_job_consumer,
+    create_job_publisher,
+)
 from app.jobs.in_memory import (
     InMemoryJobConsumer,
     InMemoryJobPublisher,
@@ -13,9 +17,17 @@ from app.jobs.protocols import (
     JobStatus,
     RunContextResolver,
 )
+from app.jobs.pubsub import (
+    AckDeadlineExtender,
+    GooglePubSubConsumer,
+    GooglePubSubPublisher,
+)
 from app.jobs.worker import ResearchJobWorker
 
 __all__ = [
+    "AckDeadlineExtender",
+    "GooglePubSubConsumer",
+    "GooglePubSubPublisher",
     "InMemoryJobConsumer",
     "InMemoryJobPublisher",
     "InMemoryJobQueue",
@@ -26,4 +38,6 @@ __all__ = [
     "JobStatus",
     "ResearchJobWorker",
     "RunContextResolver",
+    "create_job_consumer",
+    "create_job_publisher",
 ]

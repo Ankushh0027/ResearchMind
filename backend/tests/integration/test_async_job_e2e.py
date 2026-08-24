@@ -178,3 +178,90 @@ async def test_e2e_cancellation_while_queued() -> None:
         detail = await client.get(f"/api/v1/runs/{run_id}")
         assert detail.status_code == 200
         assert detail.json()["status"] == RunStage.CANCELLED.value
+
+
+@pytest.mark.asyncio
+async def test_e2e_pubsub_transport_execution() -> None:
+    """Test 6: Verify end-to-end research workflow executes seamlessly over GooglePubSubPublisher and Consumer."""
+    from app.jobs.pubsub import GooglePubSubConsumer, GooglePubSubPublisher
+    from app.jobs.worker import ResearchJobWorker
+    from tests.unit.test_pubsub_jobs import (
+        FakePublisherClient,
+        FakeReceivedMessage,
+        FakeSubscriberClient,
+    )
+
+    pub_client = FakePublisherClient()
+    sub_client = FakeSubscriberClient()
+
+    # Bridge publisher output to subscriber queue
+    original_publish = pub_client.publish
+
+    def bridging_publish(topic: str, data: bytes, **attributes: str) -> Any:
+        fut = original_publish(topic, data, **attributes)
+        msg_id = fut.result()
+        sub_client.queue.append(
+            FakeReceivedMessage(
+                ack_id=f"ack_{msg_id}", data=data, attributes=attributes
+            )
+        )
+        return fut
+
+    pub_client.publish = bridging_publish  # type: ignore[method-assign]
+
+    publisher = GooglePubSubPublisher(
+        client=pub_client,
+        project_id="test-proj",
+        topic_name="researchmind-agent-tasks",
+    )
+
+    worker = ResearchJobWorker(
+        router=create_default_worker_router(),
+        max_concurrency=4,
+    )
+
+    consumer = GooglePubSubConsumer(
+        subscription_name="researchmind-agent-tasks-sub",
+        handler=worker,
+        client=sub_client,
+        publisher=publisher,
+        project_id="test-proj",
+        worker_concurrency=2,
+    )
+
+    service = ResearchService(
+        router=create_default_worker_router(),
+        publisher=publisher,
+        consumer=consumer,
+        worker=worker,
+    )
+
+    app = create_app(service=service)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        payload = {
+            "query": "Investigate self-supervised learning for quantum materials simulation.",
+            "domain_tags": ["quantum", "machine-learning"],
+            "max_subtasks": 5,
+        }
+        res = await client.post("/api/v1/runs", json=payload)
+        assert res.status_code == 201
+        run_id = res.json()["run_id"]
+
+        detail: dict[str, Any] = {}
+        for _ in range(40):
+            status_resp = await client.get(f"/api/v1/runs/{run_id}")
+            assert status_resp.status_code == 200
+            detail = status_resp.json()
+            if detail["status"] in (
+                RunStage.COMPLETED.value,
+                RunStage.FAILED.value,
+                RunStage.CANCELLED.value,
+            ):
+                break
+            await asyncio.sleep(0.1)
+
+        assert detail["status"] == RunStage.COMPLETED.value
+        assert detail["dossier"] is not None
+        assert len(detail["completed_task_ids"]) >= 1

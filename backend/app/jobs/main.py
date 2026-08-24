@@ -6,15 +6,16 @@ import logging
 import signal
 
 from app.config import get_settings
-from app.jobs.in_memory import (
-    InMemoryJobConsumer,
-    InMemoryJobQueue,
-)
+from app.jobs.factory import create_job_consumer
 from app.jobs.protocols import (
     JobConsumerProtocol,
 )
 from app.jobs.worker import ResearchJobWorker
 from app.orchestration.router import create_default_worker_router
+from app.persistence.factory import (
+    create_checkpoint_repository,
+    create_run_repository,
+)
 
 logger = logging.getLogger("researchmind.worker")
 
@@ -33,15 +34,17 @@ class StandaloneWorkerRunner:
 
         self._consumer: JobConsumerProtocol
         if consumer is None:
-            self._queue = InMemoryJobQueue()
+            self._run_repo = create_run_repository(self.settings)
+            self._checkpoint_repo = create_checkpoint_repository(self.settings)
             self._worker = ResearchJobWorker(
                 router=create_default_worker_router(),
+                run_repo=self._run_repo,
+                checkpoint_repo=self._checkpoint_repo,
                 max_concurrency=self.settings.max_orchestration_concurrency,
             )
-            self._consumer = InMemoryJobConsumer(
-                queue=self._queue,
+            self._consumer = create_job_consumer(
                 handler=self._worker,
-                worker_concurrency=self.settings.worker_concurrency,
+                settings=self.settings,
             )
         else:
             self._consumer = consumer

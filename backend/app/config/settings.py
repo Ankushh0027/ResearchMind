@@ -15,6 +15,7 @@ class AppSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     # Application Environment
@@ -119,7 +120,12 @@ class AppSettings(BaseSettings):
         description="Path to GCP service account key for local development",
     )
 
-    # Pub/Sub Orchestration & Task Distribution
+    # Job Transport & Distributed Messaging
+    job_transport: Literal["in_memory", "pubsub"] = Field(
+        default="in_memory",
+        alias="JOB_TRANSPORT",
+        description="Active job messaging transport backend",
+    )
     pubsub_tasks_topic: str = Field(
         default="researchmind-agent-tasks",
         alias="PUBSUB_TASKS_TOPIC",
@@ -134,6 +140,37 @@ class AppSettings(BaseSettings):
         default="researchmind-workflow-events",
         alias="PUBSUB_EVENTS_TOPIC",
         description="Pub/Sub topic for streaming workflow state and progress events",
+    )
+    pubsub_dead_letter_topic: str = Field(
+        default="researchmind-agent-tasks-dlq",
+        alias="PUBSUB_DEAD_LETTER_TOPIC",
+        description="Pub/Sub dead-letter topic for unrecoverable or retry-exhausted jobs",
+    )
+    pubsub_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        alias="PUBSUB_MAX_ATTEMPTS",
+        description="Max allowed execution attempts before moving to DLQ",
+    )
+    pubsub_ack_deadline_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=600,
+        alias="PUBSUB_ACK_DEADLINE_SECONDS",
+        description="Pub/Sub message ack deadline lease in seconds",
+    )
+    pubsub_ack_extension_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=600,
+        alias="PUBSUB_ACK_EXTENSION_SECONDS",
+        description="Ack deadline extension period in seconds per heartbeat",
+    )
+    pubsub_emulator_host: str | None = Field(
+        default=None,
+        alias="PUBSUB_EMULATOR_HOST",
+        description="Host and port for local Pub/Sub emulator (e.g. localhost:8085)",
     )
 
     # Persistence & State Store Configuration
