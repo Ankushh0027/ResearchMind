@@ -19,7 +19,10 @@ from app.rag.errors import (
     RAGError,
     VectorDimensionMismatchError,
 )
-from app.rag.factory import create_embedding_model
+from app.rag.factory import (
+    create_embedding_model,
+    create_vector_store,
+)
 from app.rag.gemini import (
     DEFAULT_GEMINI_EMBEDDING_DIMENSION,
     GeminiEmbeddingModel,
@@ -33,6 +36,10 @@ from app.rag.protocols import (
     VectorPoint,
     VectorSearchResult,
     VectorStoreProtocol,
+)
+from app.rag.qdrant import (
+    DEFAULT_QDRANT_DIMENSION,
+    QdrantVectorStore,
 )
 from app.rag.store import (
     DEFAULT_STORE_DIMENSION,
@@ -48,6 +55,7 @@ __all__ = [
     "DEFAULT_EMBEDDING_DIMENSION",
     "DEFAULT_GEMINI_EMBEDDING_DIMENSION",
     "DEFAULT_MAX_CHUNKS",
+    "DEFAULT_QDRANT_DIMENSION",
     "DEFAULT_STORE_DIMENSION",
     "DeterministicTextChunker",
     "EmbeddingModelProtocol",
@@ -56,6 +64,7 @@ __all__ = [
     "GeminiEmbeddingModel",
     "InMemoryVectorStore",
     "MockEmbeddingModel",
+    "QdrantVectorStore",
     "RAGError",
     "TextChunk",
     "TextChunker",
@@ -66,6 +75,7 @@ __all__ = [
     "VectorStoreProtocol",
     "compute_cosine_similarity",
     "create_embedding_model",
+    "create_vector_store",
     "generate_embedding_id",
     "validate_dense_vector",
 ]

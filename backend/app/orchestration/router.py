@@ -269,6 +269,28 @@ def create_default_worker_router(
         llm = create_llm_client(settings=settings)
         planner_worker = PlannerWorker(planner_agent=PlannerAgent(llm_client=llm))
 
+    if researcher_worker is None and settings is not None:
+        from app.adapters.search.factory import (
+            create_academic_search_client,
+            create_search_client,
+        )
+        from app.rag.factory import create_embedding_model, create_vector_store
+        from app.rag.memory import VectorMemory
+
+        search_client = create_search_client(settings=settings)
+        academic_search_client = create_academic_search_client(settings=settings)
+        embedding_model = create_embedding_model(settings=settings)
+        vector_store = create_vector_store(settings=settings)
+        vector_memory = VectorMemory(
+            vector_store=vector_store,
+            embedding_model=embedding_model,
+        )
+        researcher_worker = ResearcherWorker(
+            search_client=search_client,
+            academic_search_client=academic_search_client,
+            vector_memory=vector_memory,
+        )
+
     router.register_worker(
         planner_worker or PlannerWorker(),
         role=AgentRole.PLANNER,

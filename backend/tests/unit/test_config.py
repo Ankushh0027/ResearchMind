@@ -133,3 +133,45 @@ def test_llm_and_embedding_settings_and_environment_override(
     assert custom.gemini_max_retries == 5
     assert custom.gemini_initial_retry_delay_seconds == 0.5
     assert custom.gemini_max_retry_delay_seconds == 20.0
+
+
+def test_qdrant_and_search_settings_and_environment_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify Qdrant, Tavily, and arXiv configuration fields and environment overrides."""
+    default_settings = AppSettings()
+    assert default_settings.vector_store_provider == "in_memory"
+    assert default_settings.search_provider == "in_memory"
+    assert default_settings.academic_search_provider == "in_memory"
+    assert default_settings.qdrant_distance == "Cosine"
+    assert default_settings.qdrant_request_timeout_seconds == 30.0
+    assert default_settings.qdrant_max_retries == 3
+    assert default_settings.tavily_request_timeout_seconds == 15.0
+    assert default_settings.tavily_max_retries == 3
+    assert default_settings.arxiv_request_timeout_seconds == 20.0
+    assert default_settings.arxiv_max_retries == 3
+
+    monkeypatch.setenv("VECTOR_STORE_PROVIDER", "qdrant")
+    monkeypatch.setenv("SEARCH_PROVIDER", "tavily")
+    monkeypatch.setenv("ACADEMIC_SEARCH_PROVIDER", "arxiv")
+    monkeypatch.setenv("QDRANT_DISTANCE", "Dot")
+    monkeypatch.setenv("QDRANT_REQUEST_TIMEOUT_SECONDS", "45.0")
+    monkeypatch.setenv("QDRANT_MAX_RETRIES", "5")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-test-override")
+    monkeypatch.setenv("TAVILY_REQUEST_TIMEOUT_SECONDS", "25.0")
+    monkeypatch.setenv("TAVILY_MAX_RETRIES", "4")
+    monkeypatch.setenv("ARXIV_REQUEST_TIMEOUT_SECONDS", "35.0")
+    monkeypatch.setenv("ARXIV_MAX_RETRIES", "5")
+
+    custom = AppSettings()
+    assert custom.vector_store_provider == "qdrant"
+    assert custom.search_provider == "tavily"
+    assert custom.academic_search_provider == "arxiv"
+    assert custom.qdrant_distance == "Dot"
+    assert custom.qdrant_request_timeout_seconds == 45.0
+    assert custom.qdrant_max_retries == 5
+    assert custom.tavily_api_key == "tvly-test-override"
+    assert custom.tavily_request_timeout_seconds == 25.0
+    assert custom.tavily_max_retries == 4
+    assert custom.arxiv_request_timeout_seconds == 35.0
+    assert custom.arxiv_max_retries == 5

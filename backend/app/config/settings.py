@@ -82,6 +82,21 @@ class AppSettings(BaseSettings):
         alias="EMBEDDING_PROVIDER",
         description="Active Embedding provider backend (in_memory/mock or gemini)",
     )
+    vector_store_provider: Literal["in_memory", "mock", "qdrant"] = Field(
+        default="in_memory",
+        alias="VECTOR_STORE_PROVIDER",
+        description="Active vector store backend (in_memory/mock or qdrant)",
+    )
+    search_provider: Literal["in_memory", "mock", "tavily", "arxiv"] = Field(
+        default="in_memory",
+        alias="SEARCH_PROVIDER",
+        description="Active general search provider backend (in_memory/mock, tavily, or arxiv)",
+    )
+    academic_search_provider: Literal["in_memory", "mock", "arxiv", "tavily"] = Field(
+        default="in_memory",
+        alias="ACADEMIC_SEARCH_PROVIDER",
+        description="Active academic search provider backend (in_memory/mock, arxiv, or tavily)",
+    )
     gemini_api_key: str = Field(
         default="",
         alias="GEMINI_API_KEY",
@@ -273,6 +288,112 @@ class AppSettings(BaseSettings):
         default=768,
         alias="QDRANT_VECTOR_SIZE",
         description="Dimensionality of embeddings stored in Qdrant",
+    )
+    qdrant_distance: Literal["Cosine", "Euclid", "Dot"] = Field(
+        default="Cosine",
+        alias="QDRANT_DISTANCE",
+        description="Distance metric for vector similarity indexing",
+    )
+    qdrant_request_timeout_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=300.0,
+        alias="QDRANT_REQUEST_TIMEOUT_SECONDS",
+        description="Timeout in seconds for Qdrant operations",
+    )
+    qdrant_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        alias="QDRANT_MAX_RETRIES",
+        description="Maximum retries on transient Qdrant operations",
+    )
+    qdrant_initial_retry_delay_seconds: float = Field(
+        default=0.5,
+        ge=0.01,
+        le=60.0,
+        alias="QDRANT_INITIAL_RETRY_DELAY_SECONDS",
+        description="Initial exponential backoff delay base for Qdrant operations",
+    )
+    qdrant_max_retry_delay_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=300.0,
+        alias="QDRANT_MAX_RETRY_DELAY_SECONDS",
+        description="Maximum backoff delay between Qdrant retries",
+    )
+
+    # Search & Evidence Gathering Configuration
+    tavily_api_key: str = Field(
+        default="",
+        alias="TAVILY_API_KEY",
+        description="API key for Tavily Web Search API",
+    )
+    tavily_api_url: str = Field(
+        default="https://api.tavily.com/search",
+        alias="TAVILY_API_URL",
+        description="Tavily Search API endpoint URL",
+    )
+    tavily_request_timeout_seconds: float = Field(
+        default=15.0,
+        ge=1.0,
+        le=300.0,
+        alias="TAVILY_REQUEST_TIMEOUT_SECONDS",
+        description="Request timeout in seconds for Tavily API queries",
+    )
+    tavily_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        alias="TAVILY_MAX_RETRIES",
+        description="Maximum retries on transient Tavily search errors",
+    )
+    tavily_initial_retry_delay_seconds: float = Field(
+        default=1.0,
+        ge=0.01,
+        le=60.0,
+        alias="TAVILY_INITIAL_RETRY_DELAY_SECONDS",
+        description="Initial exponential backoff delay base for Tavily retries",
+    )
+    tavily_max_retry_delay_seconds: float = Field(
+        default=10.0,
+        ge=0.1,
+        le=300.0,
+        alias="TAVILY_MAX_RETRY_DELAY_SECONDS",
+        description="Maximum backoff delay between Tavily retries",
+    )
+    arxiv_api_url: str = Field(
+        default="https://export.arxiv.org/api/query",
+        alias="ARXIV_API_URL",
+        description="Public arXiv search and harvest API endpoint URL",
+    )
+    arxiv_request_timeout_seconds: float = Field(
+        default=20.0,
+        ge=1.0,
+        le=300.0,
+        alias="ARXIV_REQUEST_TIMEOUT_SECONDS",
+        description="Request timeout in seconds for arXiv API queries",
+    )
+    arxiv_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        alias="ARXIV_MAX_RETRIES",
+        description="Maximum retries on transient arXiv queries",
+    )
+    arxiv_initial_retry_delay_seconds: float = Field(
+        default=1.0,
+        ge=0.01,
+        le=60.0,
+        alias="ARXIV_INITIAL_RETRY_DELAY_SECONDS",
+        description="Initial exponential backoff delay base for arXiv retries",
+    )
+    arxiv_max_retry_delay_seconds: float = Field(
+        default=10.0,
+        ge=0.1,
+        le=300.0,
+        alias="ARXIV_MAX_RETRY_DELAY_SECONDS",
+        description="Maximum backoff delay between arXiv retries",
     )
 
     # Logging & Observability
