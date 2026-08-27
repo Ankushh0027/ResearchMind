@@ -23,11 +23,31 @@ R = TypeVar("R")
 
 def _is_retryable_error(exc: Exception) -> bool:
     """Determine whether an exception represents a transient, retryable failure."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+
     status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+    if status_code in (400, 401, 403, 404):
+        return False
     if status_code in (429, 500, 502, 503, 504):
         return True
 
     err_str = str(exc).upper()
+    non_retryable_markers = (
+        "400",
+        "401",
+        "403",
+        "404",
+        "UNAUTHENTICATED",
+        "PERMISSION_DENIED",
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "API_KEY_INVALID",
+        "API KEY NOT VALID",
+    )
+    if any(marker in err_str for marker in non_retryable_markers):
+        return False
+
     retryable_markers = (
         "429",
         "RESOURCE_EXHAUSTED",
@@ -67,6 +87,7 @@ class GeminiLLMClient(LLMClientProtocol):
         fast_model_name: str = "gemini-2.5-flash",
         temperature: float = 0.2,
         max_output_tokens: int = 8192,
+        request_timeout_seconds: float = 60.0,
         max_retries: int = 3,
         initial_retry_delay_seconds: float = 1.0,
         max_retry_delay_seconds: float = 10.0,
@@ -77,6 +98,7 @@ class GeminiLLMClient(LLMClientProtocol):
         self.fast_model_name = fast_model_name
         self.temperature = max(0.0, min(2.0, temperature))
         self.max_output_tokens = max(1, max_output_tokens)
+        self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
         self.max_retries = max(0, max_retries)
         self.initial_retry_delay_seconds = max(0.01, initial_retry_delay_seconds)
         self.max_retry_delay_seconds = max(
@@ -110,11 +132,12 @@ class GeminiLLMClient(LLMClientProtocol):
         operation_name: str,
         func: Callable[[], Coroutine[Any, Any, R]],
     ) -> R:
-        """Execute an asynchronous operation with bounded exponential backoff and jitter."""
+        """Execute an asynchronous operation with timeout, bounded exponential backoff, and jitter."""
         attempt = 0
         while True:
             try:
-                return await func()
+                async with asyncio.timeout(self.request_timeout_seconds):
+                    return await func()
             except asyncio.CancelledError:
                 logger.info(
                     "Operation '%s' was cancelled during execution.", operation_name

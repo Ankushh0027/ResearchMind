@@ -23,6 +23,7 @@ def create_llm_client(
             fast_model_name=cfg.gemini_fast_model,
             temperature=cfg.gemini_temperature,
             max_output_tokens=cfg.gemini_max_output_tokens,
+            request_timeout_seconds=cfg.gemini_request_timeout_seconds,
             max_retries=cfg.gemini_max_retries,
             initial_retry_delay_seconds=cfg.gemini_initial_retry_delay_seconds,
             max_retry_delay_seconds=cfg.gemini_max_retry_delay_seconds,

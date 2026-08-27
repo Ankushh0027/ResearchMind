@@ -102,6 +102,7 @@ def test_llm_and_embedding_settings_and_environment_override(
     assert default_settings.gemini_embedding_model == "text-embedding-004"
     assert default_settings.gemini_temperature == 0.2
     assert default_settings.gemini_max_output_tokens == 8192
+    assert default_settings.gemini_request_timeout_seconds == 60.0
     assert default_settings.gemini_max_retries == 3
     assert default_settings.gemini_initial_retry_delay_seconds == 1.0
     assert default_settings.gemini_max_retry_delay_seconds == 10.0
@@ -114,6 +115,7 @@ def test_llm_and_embedding_settings_and_environment_override(
     monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "custom-embedding-001")
     monkeypatch.setenv("GEMINI_TEMPERATURE", "0.7")
     monkeypatch.setenv("GEMINI_MAX_OUTPUT_TOKENS", "4096")
+    monkeypatch.setenv("GEMINI_REQUEST_TIMEOUT_SECONDS", "45.0")
     monkeypatch.setenv("GEMINI_MAX_RETRIES", "5")
     monkeypatch.setenv("GEMINI_INITIAL_RETRY_DELAY_SECONDS", "0.5")
     monkeypatch.setenv("GEMINI_MAX_RETRY_DELAY_SECONDS", "20.0")
@@ -127,6 +129,7 @@ def test_llm_and_embedding_settings_and_environment_override(
     assert custom.gemini_embedding_model == "custom-embedding-001"
     assert custom.gemini_temperature == 0.7
     assert custom.gemini_max_output_tokens == 4096
+    assert custom.gemini_request_timeout_seconds == 45.0
     assert custom.gemini_max_retries == 5
     assert custom.gemini_initial_retry_delay_seconds == 0.5
     assert custom.gemini_max_retry_delay_seconds == 20.0

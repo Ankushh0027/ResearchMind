@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import BaseModel, Field
 
-from app.adapters.llm.base import LLMRequest, LLMResponse
+from app.adapters.llm.base import LLMClientProtocol, LLMRequest, LLMResponse
 from app.adapters.llm.gemini import (
     GeminiLLMClient,
     _is_retryable_error,
@@ -81,9 +81,16 @@ class FakeGenAIClient:
         self.aio = FakeAsyncGenAI()
 
 
+def test_gemini_llm_satisfies_protocol() -> None:
+    """Verify GeminiLLMClient satisfies LLMClientProtocol."""
+    client = FakeGenAIClient()
+    adapter = GeminiLLMClient(api_key="fake-key", client=client)
+    assert isinstance(adapter, LLMClientProtocol)
+
+
 @pytest.mark.asyncio
 async def test_gemini_llm_successful_text_generation() -> None:
-    """Test 1: Verify text generation with custom prompt, temperature, and tokens."""
+    """Test text generation with custom prompt, temperature, and tokens."""
     client = FakeGenAIClient()
     client.aio.models.side_effects = [
         FakeGenerateContentResponse(
@@ -117,8 +124,25 @@ async def test_gemini_llm_successful_text_generation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_llm_text_generation_without_usage_metadata() -> None:
+    """Test text generation when provider response has no usage metadata."""
+    client = FakeGenAIClient()
+    resp = FakeGenerateContentResponse(text="Simple text.")
+    resp.usage_metadata = None  # type: ignore[assignment]
+    client.aio.models.side_effects = [resp]
+
+    adapter = GeminiLLMClient(api_key="fake-key", client=client)
+    response = await adapter.generate_text(LLMRequest(user_prompt="Test prompt"))
+
+    assert response.content == "Simple text."
+    assert response.prompt_tokens == 0
+    assert response.completion_tokens == 0
+    assert response.total_tokens == 0
+
+
+@pytest.mark.asyncio
 async def test_gemini_llm_successful_structured_generation_json() -> None:
-    """Test 2: Verify structured generation validates cleanly into Pydantic schema from JSON."""
+    """Verify structured generation validates cleanly into Pydantic schema from JSON string."""
     client = FakeGenAIClient()
     client.aio.models.side_effects = [
         FakeGenerateContentResponse(
@@ -146,7 +170,7 @@ async def test_gemini_llm_successful_structured_generation_json() -> None:
 
 @pytest.mark.asyncio
 async def test_gemini_llm_successful_structured_generation_parsed() -> None:
-    """Test 3: Verify structured generation with parsed SDK object."""
+    """Verify structured generation with parsed SDK object or dictionary."""
     client = FakeGenAIClient()
     client.aio.models.side_effects = [
         FakeGenerateContentResponse(
@@ -175,15 +199,81 @@ async def test_gemini_llm_successful_structured_generation_parsed() -> None:
     assert result.task_count == 2
 
 
+@pytest.mark.asyncio
+async def test_gemini_llm_structured_generation_direct_instance() -> None:
+    """Verify structured generation when provider directly returns schema instance."""
+    client = FakeGenAIClient()
+    expected = SampleDecomposition(
+        rationale="Direct instance", task_count=1, tags=["direct"]
+    )
+    client.aio.models.side_effects = [expected]
+
+    adapter = GeminiLLMClient(api_key="fake-key", client=client)
+    result = await adapter.generate_structured(
+        system_prompt="System",
+        user_prompt="User",
+        response_schema=SampleDecomposition,
+    )
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_gemini_llm_structured_generation_malformed_json_raises_value_error() -> (
+    None
+):
+    """Verify ValueError is raised with clear context when model returns invalid JSON."""
+    client = FakeGenAIClient()
+    client.aio.models.side_effects = [
+        FakeGenerateContentResponse(text="This is not valid json at all")
+    ]
+
+    adapter = GeminiLLMClient(
+        api_key="fake-key",
+        client=client,
+        max_retries=1,
+    )
+
+    with pytest.raises(ValueError, match="could not be validated"):
+        await adapter.generate_structured(
+            system_prompt="Decompose",
+            user_prompt="Quantum query",
+            response_schema=SampleDecomposition,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gemini_llm_structured_generation_schema_mismatch_raises_value_error() -> (
+    None
+):
+    """Verify ValueError is raised when JSON missing required schema fields."""
+    client = FakeGenAIClient()
+    client.aio.models.side_effects = [
+        FakeGenerateContentResponse(text='{"wrong_field": 123}')
+    ]
+
+    adapter = GeminiLLMClient(
+        api_key="fake-key",
+        client=client,
+        max_retries=1,
+    )
+
+    with pytest.raises(ValueError, match="could not be validated"):
+        await adapter.generate_structured(
+            system_prompt="Decompose",
+            user_prompt="Quantum query",
+            response_schema=SampleDecomposition,
+        )
+
+
 def test_gemini_llm_missing_api_key_error() -> None:
-    """Test 4: Verify ValueError if GEMINI_API_KEY is missing and no client injected."""
+    """Verify ValueError if GEMINI_API_KEY is missing and no client injected."""
     adapter = GeminiLLMClient(api_key="")
     with pytest.raises(ValueError, match="GEMINI_API_KEY is required"):
         adapter._get_client()
 
 
 def test_gemini_llm_missing_dependency_error() -> None:
-    """Test 5: Verify clear RuntimeError if google-genai is uninstalled."""
+    """Verify clear RuntimeError if google-genai is uninstalled."""
     orig_import = builtins.__import__
 
     def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -200,7 +290,7 @@ def test_gemini_llm_missing_dependency_error() -> None:
 
 @pytest.mark.asyncio
 async def test_gemini_llm_retry_on_429_rate_limit() -> None:
-    """Test 6: Verify exponential retry when encountering HTTP 429 rate limit."""
+    """Verify exponential retry when encountering HTTP 429 rate limit."""
     client = FakeGenAIClient()
 
     class RateLimitError(Exception):
@@ -228,7 +318,7 @@ async def test_gemini_llm_retry_on_429_rate_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_gemini_llm_retry_on_500_503_server_errors() -> None:
-    """Test 7: Verify exponential retry on 500 and 503 internal server errors."""
+    """Verify exponential retry on 500 and 503 internal server errors."""
     client = FakeGenAIClient()
 
     class ServerError500(Exception):
@@ -263,8 +353,31 @@ async def test_gemini_llm_retry_on_500_503_server_errors() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_llm_retry_on_timeout_error() -> None:
+    """Verify retry on TimeoutError / asyncio.TimeoutError."""
+    client = FakeGenAIClient()
+
+    client.aio.models.side_effects = [
+        TimeoutError("Connection timed out"),
+        FakeGenerateContentResponse(text="Success after timeout."),
+    ]
+
+    adapter = GeminiLLMClient(
+        api_key="fake-key",
+        client=client,
+        max_retries=2,
+        initial_retry_delay_seconds=0.01,
+        max_retry_delay_seconds=0.05,
+    )
+
+    response = await adapter.generate_text(LLMRequest(user_prompt="Timeout test"))
+    assert response.content == "Success after timeout."
+    assert client.aio.models.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_gemini_llm_retry_exhaustion_raises_error() -> None:
-    """Test 8: Verify exception is raised after retry attempts are exhausted."""
+    """Verify exception is raised after retry attempts are exhausted."""
     client = FakeGenAIClient()
 
     class PersistentRateLimit(Exception):
@@ -295,7 +408,7 @@ async def test_gemini_llm_retry_exhaustion_raises_error() -> None:
 
 @pytest.mark.asyncio
 async def test_gemini_llm_non_retryable_error_fails_immediately() -> None:
-    """Test 9: Verify non-retryable errors (e.g. 400 Bad Request) fail immediately without retrying."""
+    """Verify non-retryable errors (e.g. 400 Bad Request) fail immediately without retrying."""
     client = FakeGenAIClient()
 
     class BadRequest400(Exception):
@@ -319,8 +432,33 @@ async def test_gemini_llm_non_retryable_error_fails_immediately() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_llm_permanent_auth_error_fails_fast() -> None:
+    """Verify HTTP 401 and 403 permanent authentication/permission errors fail immediately without retries."""
+    client = FakeGenAIClient()
+
+    class AuthError401(Exception):
+        def __init__(self) -> None:
+            super().__init__("401 UNAUTHENTICATED: API_KEY_INVALID")
+            self.status_code = 401
+
+    client.aio.models.side_effects = [AuthError401()]
+
+    adapter = GeminiLLMClient(
+        api_key="fake-key",
+        client=client,
+        max_retries=3,
+        initial_retry_delay_seconds=0.01,
+    )
+
+    with pytest.raises(AuthError401):
+        await adapter.generate_text(LLMRequest(user_prompt="Auth test"))
+
+    assert client.aio.models.call_count == 1  # Fails fast on attempt 1
+
+
+@pytest.mark.asyncio
 async def test_gemini_llm_cancellation_during_retry_wait() -> None:
-    """Test 10: Verify that cancelling task during retry sleep cleanly cancels without hanging."""
+    """Verify that cancelling task during retry sleep cleanly cancels without hanging."""
     client = FakeGenAIClient()
 
     class SlowRateLimit(Exception):
@@ -346,10 +484,10 @@ async def test_gemini_llm_cancellation_during_retry_wait() -> None:
 
 
 def test_gemini_llm_mask_api_key_and_secrets() -> None:
-    """Test 11: Verify API key masking and that sensitive credentials never leak."""
-    secret = "AIzaSyD-1234567890abcdef-secret"
+    """Verify API key masking and that sensitive credentials never leak."""
+    secret = "fake-secret-key-mock-1234567890"
     masked = _mask_api_key(secret)
-    assert masked == "AIza...cret"
+    assert masked == "fake...7890"
     assert secret not in masked
 
     assert _mask_api_key("") == "<none>"
@@ -358,4 +496,7 @@ def test_gemini_llm_mask_api_key_and_secrets() -> None:
     # Verify helper error classifier
     assert _is_retryable_error(Exception("429 RESOURCE_EXHAUSTED")) is True
     assert _is_retryable_error(Exception("503 Service Unavailable")) is True
+    assert _is_retryable_error(TimeoutError("Timeout")) is True
     assert _is_retryable_error(Exception("400 Bad Request")) is False
+    assert _is_retryable_error(Exception("401 UNAUTHENTICATED")) is False
+    assert _is_retryable_error(Exception("403 PERMISSION_DENIED")) is False

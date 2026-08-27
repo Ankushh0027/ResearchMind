@@ -1,120 +1,153 @@
-# Phase 6.3: Live Intelligence Adapters Implementation
+# Phase 6.3 Implementation Document: Live Intelligence Adapters
 
-## Overview
+## Executive Summary
 
-Phase 6.3 introduces production-ready, provider-agnostic live adapters for **Google Gemini Large Language Models (LLM)** and **Google Gemini Embeddings**, while preserving all existing protocols (`LLMClientProtocol` and `EmbeddingModelProtocol`), dependency injection, and deterministic in-memory mock implementations for local testing and zero-configuration development.
+Phase 6.3 integrates production-ready Google Gemini Large Language Model (LLM) and Dense Vector Embedding adapters into the ResearchMind autonomous multi-agent platform. This replaces development-only mock intelligence layers with enterprise-grade adapters while maintaining strict backward compatibility with existing agent protocols, deterministic in-memory implementations for local test suites, and robust resilience patterns.
 
 ---
 
-## Architecture & Provider Boundaries
+## Architecture & Adapter Boundaries
+
+ResearchMind enforces clean separation between agent reasoning orchestration and underlying AI provider APIs through provider-agnostic protocols:
 
 ```
-+-------------------------------------------------------------------------+
-|                  ResearchMind Intelligence Architecture                  |
-+-------------------------------------------------------------------------+
-                                    │
-                                    ▼
-       ┌────────────────────────────────────────────────────────┐
-       │             Agents & Intelligence Pipelines            │
-       │   Planner, Analyst, Verifier, Evaluator, Reporter, RAG │
-       └────────────────────────────┬───────────────────────────┘
-                                    │
-                    ┌───────────────┴───────────────┐
-                    ▼                               ▼
-       ┌─────────────────────────┐     ┌─────────────────────────┐
-       │    LLMClientProtocol    │     │ EmbeddingModelProtocol  │
-       │  generate_text()        │     │  embed_text()           │
-       │  generate_structured()  │     │  embed_batch()          │
-       └────────────┬────────────┘     └────────────┬────────────┘
-                    │                               │
-          ┌─────────┴─────────┐           ┌─────────┴─────────┐
-          ▼                   ▼           ▼                   ▼
-┌──────────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│  MockLLMClient   │ │GeminiLLM     │ │MockEmbedding │ │Gemini        │
-│  (local/testing) │ │Client (Live) │ │Model (local) │ │EmbeddingModel│
-└──────────────────┘ └───────┬──────┘ └──────────────┘ └───────┬──────┘
-                             │                                 │
-                             ▼                                 ▼
-                     ┌───────────────┐                 ┌───────────────┐
-                     │ Google GenAI  │                 │ Google GenAI  │
-                     │ Models API    │                 │ Embeddings    │
-                     └───────────────┘                 └───────────────┘
++-------------------------------------------------------------------------------+
+|                           ResearchMind Multi-Agent DAG                        |
+|   (PlannerWorker, ResearcherWorker, AnalystWorker, VerifierWorker, ...)       |
++---------------------------------------+---------------------------------------+
+                                        |
+                   +--------------------+--------------------+
+                   |                                         |
+                   v                                         v
+     [ LLMClientProtocol ]                       [ EmbeddingModelProtocol ]
+     - generate_text()                           - embed_text()
+     - generate_structured()                     - embed_batch()
+                   |                             - embed_chunk()
+        +----------+----------+                              |
+        |                     |                   +----------+----------+
+        v                     v                   v                     v
+[ MockLLMClient ]     [ GeminiLLMClient ] [ MockEmbeddingModel ] [ GeminiEmbeddingModel ]
+  (Unit/Local Tests)    (Google GenAI SDK)  (Unit/Local Tests)     (Google GenAI SDK)
 ```
 
----
+### Protocol Contracts
 
-## 1. Gemini LLM Adapter (`app.adapters.llm.gemini.GeminiLLMClient`)
+1. **`LLMClientProtocol`** (`app.adapters.llm.base`):
+   - `generate_text(request: LLMRequest) -> LLMResponse`: Generates unstructured text or tool invocations with token metadata.
+   - `generate_structured(system_prompt: str, user_prompt: str, response_schema: type[T], temperature: float) -> T`: Generates structured outputs guaranteed to deserialize and validate into the specified Pydantic schema `T`.
 
-The `GeminiLLMClient` implements `LLMClientProtocol` and interfaces with Google's modern `google-genai` SDK:
-
-- **Unstructured Text Generation (`generate_text`)**:
-  - Submits user prompt with system instructions, temperature, and token bounds.
-  - Returns standardized `LLMResponse` envelope with extracted token counts and metadata.
-- **Structured Pydantic Generation (`generate_structured`)**:
-  - Configures `response_mime_type="application/json"` and binds `response_schema`.
-  - Deserializes and validates the model response directly into the target Pydantic schema (e.g. `PlannedDecomposition`, `ExtractedClaim`, `KeyFinding`).
-- **Resilience & Exponential Retry Backoff**:
-  - Bounded retry loop (`max_retries`, default 3).
-  - Handles transient status codes (429 Rate Limit / Quota Exhausted, 500 Internal Error, 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout) and transport/connection timeouts.
-  - Exponential delay with random jitter: `delay = min(max_delay, initial_delay * (2 ** attempt)) * uniform(0.8, 1.2)`.
-  - Non-retryable errors (e.g., 400 Bad Request, schema validation errors, input errors) fail immediately without retrying.
-  - Task cancellation (`asyncio.CancelledError`) cleanly interrupts sleep and aborts in-flight operations.
-- **Credential Protection**:
-  - Never logs or exposes raw `GEMINI_API_KEY` values in logs, exceptions, or error envelopes.
-  - Masking helper `_mask_api_key` sanitizes keys to `AIza...cret`.
+2. **`EmbeddingModelProtocol`** (`app.rag.protocols`):
+   - `dimension: int`: Exposes vector dimensionality (e.g. 768 for `text-embedding-004`).
+   - `embed_text(text: str) -> tuple[float, ...]`: Generates a dense float vector for a single text.
+   - `embed_batch(texts: list[str]) -> list[tuple[float, ...]]`: Generates dense float vectors for a batch of strings.
+   - `embed_chunk(chunk: TextChunk) -> EmbeddingRecord`: Embeds an upstream `TextChunk` into an immutable `EmbeddingRecord`.
 
 ---
 
-## 2. Gemini Embedding Adapter (`app.rag.gemini.GeminiEmbeddingModel`)
+## Configuration & Environment Variables
 
-The `GeminiEmbeddingModel` implements `EmbeddingModelProtocol` for dense semantic vector generation:
+All adapter settings are environment-driven using Pydantic Settings (`app.config.settings.AppSettings`).
 
-- **Dimensionality**: Configured for 768 dimensions (`text-embedding-004`).
-- **Single & Batch Generation**:
-  - `embed_text(text: str) -> tuple[float, ...]`: Embeds a single query or document.
-  - `embed_batch(texts: list[str]) -> list[tuple[float, ...]]`: Batches multiple text strings in a single provider call.
-  - `embed_chunk(chunk: TextChunk) -> EmbeddingRecord`: Builds immutable `EmbeddingRecord` maintaining provenance (`chunk_id`, `evidence_id`, `run_id`).
-- **Strict Vector Validation**:
-  - Validates components are non-empty, finite numeric floats (no `NaN`, no `Inf`), and match declared dimension.
-- **Retry Handling**: Exponential backoff with jitter on 429 quota exhaustion and 5xx server errors.
-
----
-
-## 3. Configuration Contract
-
-Environment configuration in `app.config.settings.AppSettings`:
-
-| Setting Variable | Type | Default | Description |
-|---|---|---|---|
-| `LLM_PROVIDER` | `Literal["in_memory", "mock", "gemini"]` | `"in_memory"` | Active LLM client implementation |
-| `EMBEDDING_PROVIDER` | `Literal["in_memory", "mock", "gemini"]` | `"in_memory"` | Active Embedding model implementation |
-| `GEMINI_API_KEY` | `str` | `""` | Google Gemini API Key |
-| `GEMINI_MODEL` | `str` | `"gemini-2.5-pro"` | Default reasoning LLM model |
-| `GEMINI_FAST_MODEL` | `str` | `"gemini-2.5-flash"` | Fast extraction/triage LLM model |
-| `GEMINI_EMBEDDING_MODEL` | `str` | `"text-embedding-004"` | Dense vector embedding model |
-| `GEMINI_TEMPERATURE` | `float` | `0.2` | Sampling temperature |
-| `GEMINI_MAX_OUTPUT_TOKENS` | `int` | `8192` | Max token budget per response |
-| `GEMINI_MAX_RETRIES` | `int` | `3` | Maximum retry attempts for transient errors |
-| `GEMINI_INITIAL_RETRY_DELAY_SECONDS` | `float` | `1.0` | Initial exponential backoff delay |
-| `GEMINI_MAX_RETRY_DELAY_SECONDS` | `float` | `10.0` | Cap on exponential backoff delay |
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `LLM_PROVIDER` | `Literal["in_memory", "mock", "gemini"]` | `in_memory` | Active LLM inference provider backend. |
+| `EMBEDDING_PROVIDER` | `Literal["in_memory", "mock", "gemini"]` | `in_memory` | Active embedding model backend. |
+| `GEMINI_API_KEY` | `str` | `""` | Google AI Studio or Vertex AI Gemini API key. |
+| `GEMINI_MODEL` | `str` | `gemini-2.5-pro` | Default reasoning model for agent decomposition and synthesis. |
+| `GEMINI_FAST_MODEL` | `str` | `gemini-2.5-flash` | Fast model for extraction and triage tasks. |
+| `GEMINI_EMBEDDING_MODEL` | `str` | `text-embedding-004` | Model for generating 768-dimensional dense vector embeddings. |
+| `GEMINI_TEMPERATURE` | `float` | `0.2` | Sampling temperature for deterministic agent reasoning. |
+| `GEMINI_MAX_OUTPUT_TOKENS`| `int` | `8192` | Maximum output tokens per inference call. |
+| `GEMINI_REQUEST_TIMEOUT_SECONDS` | `float` | `60.0` | Timeout per HTTP/gRPC API invocation. |
+| `GEMINI_MAX_RETRIES` | `int` | `3` | Maximum retry attempts on transient network or provider errors. |
+| `GEMINI_INITIAL_RETRY_DELAY_SECONDS` | `float` | `1.0` | Initial exponential backoff delay base. |
+| `GEMINI_MAX_RETRY_DELAY_SECONDS` | `float` | `10.0` | Maximum bounded backoff delay between retries. |
 
 ---
 
-## 4. Factory & Dependency Injection
+## Reliability & Retry Policy
 
-- **`create_llm_client(settings, client)`**:
-  - `LLM_PROVIDER=in_memory` or `"mock"` → `MockLLMClient`
-  - `LLM_PROVIDER=gemini` → `GeminiLLMClient`
-- **`create_embedding_model(settings, client)`**:
-  - `EMBEDDING_PROVIDER=in_memory` or `"mock"` → `MockEmbeddingModel`
-  - `EMBEDDING_PROVIDER=gemini` → `GeminiEmbeddingModel`
+### Transient vs. Permanent Error Classification
+
+The adapter implements strict failure classification to avoid infinite loops on unrecoverable errors:
+
+* **Retryable Errors** (Exponential Backoff with Full Jitter):
+  * HTTP `429` (Rate Limit / `RESOURCE_EXHAUSTED` / Quota)
+  * HTTP `500` (Internal Server Error)
+  * HTTP `502` (Bad Gateway)
+  * HTTP `503` (Service Unavailable)
+  * HTTP `504` (Gateway Timeout)
+  * `asyncio.TimeoutError` / `TimeoutError` (Deadline Exceeded)
+  * Transient network disconnects (`CONNECTION_RESET`, `TEMPORARY`)
+
+* **Non-Retryable Errors** (Fail Fast Immediately):
+  * HTTP `400` / `INVALID_ARGUMENT` / Malformed prompt
+  * HTTP `401` / `UNAUTHENTICATED` / Invalid API Key
+  * HTTP `403` / `PERMISSION_DENIED`
+  * HTTP `404` / `NOT_FOUND`
+  * Pydantic `ValidationError` / Input schema mismatches
+
+### Bounded Backoff Formula
+
+$$\text{delay} = \min(\text{max\_delay}, \text{initial\_delay} \times 2^{\text{attempt}}) \times \text{uniform}(0.8, 1.2)$$
 
 ---
 
-## 5. Testing & Verification
+## Structured Output Handling
 
-Unit and integration test suites run entirely without making real external network calls:
-- `backend/tests/unit/test_gemini_llm.py` (11 unit tests covering generation, structured output, retries, 429 backoff, 500/503, non-retryable errors, cancellation, and secret masking).
-- `backend/tests/unit/test_gemini_embeddings.py` (7 unit tests covering text, batch, chunk embedding, validation, and transient retries).
-- `backend/tests/unit/test_intelligence_factory.py` (5 factory tests).
-- `backend/tests/integration/test_gemini_agents_e2e.py` (2 integration tests verifying PlannerAgent and AgentWorkerRouter with Gemini adapter).
+ResearchMind agents (Planner, Analyst, Verifier, Evaluator, Reporter) consume typed Pydantic models. The `GeminiLLMClient.generate_structured()` method guarantees type safety:
+
+1. **Native Structured Generation**: Utilizes the Google GenAI SDK `response_schema=response_schema` and `response_mime_type="application/json"` parameters.
+2. **Multi-tier Response Resolution**:
+   - Schema instance directly returned.
+   - Parsed SDK dictionary payload (`response.parsed`) validated via `model_validate()`.
+   - Raw JSON string (`response.text`) deserialized and validated via `model_validate_json()`.
+3. **Strict Error Propagation**: If the model produces invalid or incomplete JSON, `ValueError` is raised with the validation error details.
+
+---
+
+## Token Accounting
+
+Token usage metadata is extracted directly from Google GenAI responses:
+
+* `prompt_tokens`: extracted from `usage_metadata.prompt_token_count`
+* `completion_tokens`: extracted from `usage_metadata.candidates_token_count`
+* `total_tokens`: extracted from `usage_metadata.total_token_count` or calculated as `prompt + completion`
+
+If usage metadata is absent (e.g. mock responses or partial streaming), fields safely default to `0` without breaking downstream aggregation.
+
+---
+
+## Dense Embedding Generation
+
+* **Model**: Google `text-embedding-004`.
+* **Dimension**: 768 (strictly enforced by `validate_dense_vector`).
+* **Batch Ingestion**: Supports batches of text chunks, preserving order and mapping chunk IDs to `EmbeddingRecord` objects.
+* **Integrity Validation**: Rejects `NaN`, `Inf`, and dimension mismatches with typed `EvidenceValidationError` and `VectorDimensionMismatchError`.
+
+---
+
+## Security & Secret Handling
+
+* **Zero Hardcoded Secrets**: Secrets are never hardcoded in source, committed files, or tests.
+* **Safe Key Masking**: The `_mask_api_key()` helper formats keys as `AIza...cret` or `***` for all logger outputs.
+* **Isolated Environment Loading**: In tests, mock clients or fake keys are injected without making network calls.
+* **Gitignore Protections**: `.env`, `.env.*` (except `.env.example`), and credential JSON files are ignored.
+
+---
+
+## Quality Gates & Verification
+
+Local and CI verification requirements:
+
+1. **Pytest**: 540+ passing unit and integration tests (`python -m pytest`).
+2. **Ruff Linter**: Zero lint issues (`ruff check .`).
+3. **Ruff Formatter**: Strict formatting (`ruff format --check .`).
+4. **Mypy**: Strict type-checking (`mypy --python-version 3.12 backend/app backend/tests`).
+
+---
+
+## Limitations & Next Steps
+
+* **Current Scope (Phase 6.3)**: Real Gemini LLM and Embedding adapters enabled with full fallback mocks.
+* **Upcoming (Phase 6.4)**: Real Qdrant vector database persistence and live web/search tool adapters.

@@ -20,6 +20,7 @@ def create_embedding_model(
         return GeminiEmbeddingModel(
             api_key=cfg.gemini_api_key,
             model_name=cfg.gemini_embedding_model,
+            request_timeout_seconds=cfg.gemini_request_timeout_seconds,
             max_retries=cfg.gemini_max_retries,
             initial_retry_delay_seconds=cfg.gemini_initial_retry_delay_seconds,
             max_retry_delay_seconds=cfg.gemini_max_retry_delay_seconds,

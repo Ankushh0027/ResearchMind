@@ -115,6 +115,13 @@ class AppSettings(BaseSettings):
         alias="GEMINI_MAX_OUTPUT_TOKENS",
         description="Maximum tokens allowed in model responses",
     )
+    gemini_request_timeout_seconds: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=300.0,
+        alias="GEMINI_REQUEST_TIMEOUT_SECONDS",
+        description="Request timeout in seconds for Gemini API operations",
+    )
     gemini_max_retries: int = Field(
         default=3,
         ge=0,
