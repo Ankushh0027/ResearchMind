@@ -36,6 +36,14 @@ class InMemoryJobQueue:
         """Retrieve the next queued job envelope (FIFO)."""
         return await self._queue.get()
 
+    def qsize(self) -> int:
+        """Return current number of items waiting in queue."""
+        return self._queue.qsize()
+
+    def size(self) -> int:
+        """Alias for qsize to return number of queued items."""
+        return self._queue.qsize()
+
     def task_done(self) -> None:
         """Signal completion of the retrieved queue item."""
         self._queue.task_done()

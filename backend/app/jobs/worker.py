@@ -1,5 +1,5 @@
-"""Job worker gateway coordinating Planner and DAGExecutor through AgentWorkerRouter."""
-
+import contextlib
+import logging
 import time
 from typing import Any
 
@@ -12,6 +12,12 @@ from app.common.enums import (
 )
 from app.config.settings import get_settings
 from app.intelligence.models import EvaluationReport, ResearchDossier
+from app.jobs.heartbeat import WorkerHeartbeat
+from app.jobs.lease import (
+    LeaseManagerProtocol,
+    WorkerLease,
+    generate_worker_id,
+)
 from app.jobs.protocols import (
     JobEnvelope,
     JobHandlerProtocol,
@@ -42,6 +48,8 @@ from app.state.models import (
 from app.storage.models import ArtifactType
 from app.storage.protocols import ArtifactStorageProtocol
 
+logger = logging.getLogger("researchmind.worker")
+
 
 class ResearchJobWorker(JobHandlerProtocol):
     """Worker gateway receiving JobEnvelopes and executing the multi-agent research workflow."""
@@ -53,6 +61,8 @@ class ResearchJobWorker(JobHandlerProtocol):
         run_repo: RunRepositoryProtocol | None = None,
         checkpoint_repo: CheckpointRepositoryProtocol | None = None,
         artifact_storage: ArtifactStorageProtocol | None = None,
+        lease_manager: LeaseManagerProtocol | None = None,
+        worker_id: str | None = None,
         max_concurrency: int = 4,
     ) -> None:
         self._router = router or create_default_worker_router()
@@ -60,6 +70,8 @@ class ResearchJobWorker(JobHandlerProtocol):
         self._run_repo = run_repo
         self._checkpoint_repo = checkpoint_repo
         self._artifact_storage = artifact_storage
+        self._lease_manager = lease_manager
+        self._worker_id = worker_id or generate_worker_id()
         self._max_concurrency = max_concurrency
 
     def set_run_context_resolver(self, resolver: RunContextResolver) -> None:
@@ -77,6 +89,10 @@ class ResearchJobWorker(JobHandlerProtocol):
     def set_artifact_storage(self, storage: ArtifactStorageProtocol) -> None:
         """Configure or update the ArtifactStorage backend."""
         self._artifact_storage = storage
+
+    def set_lease_manager(self, manager: LeaseManagerProtocol) -> None:
+        """Configure or update the LeaseManager."""
+        self._lease_manager = manager
 
     async def handle_job(self, envelope: JobEnvelope) -> JobEnvelope:
         """Execute goal decomposition and research DAG for a given job envelope."""
@@ -98,158 +114,109 @@ class ResearchJobWorker(JobHandlerProtocol):
                 is_retryable=False,
             )
 
-        # 2. Resolve RunContext
-        context = self._resolver(run_id) if self._resolver is not None else None
+        # 1b. Phase 7.1: Worker Lease Acquisition & Heartbeat
+        settings = get_settings()
+        lease: WorkerLease | None = None
+        heartbeat: WorkerHeartbeat | None = None
 
-        if context is None and self._run_repo is not None:
-            record = await self._run_repo.get_run(run_id)
-            if record is not None:
-                token = CancellationToken()
-                if record.is_cancelled:
-                    token.cancel(record.cancellation_reason or "Cancelled")
-                context = RunContext(
-                    run_id=record.run_id,
-                    goal=record.goal,
-                    cancellation_token=token,
-                    event_sink=InMemoryEventSink(),
-                    checkpoint_repo=self._checkpoint_repo
-                    or InMemoryCheckpointRepository(),
-                )
-                context.status = record.status
-                context.plan_id = record.plan_id
-                context.completed_task_ids = list(record.completed_task_ids)
-                context.failed_task_ids = list(record.failed_task_ids)
-                context.cancelled_task_ids = list(record.cancelled_task_ids)
-                context.total_token_usage = record.total_token_usage
-                context.duration_seconds = record.duration_seconds
-                context.dossier = record.dossier
-                context.artifacts = list(record.artifacts)
-                context.error = record.error
-
-        if context is None:
-            return envelope.with_status(
-                JobStatus.FAILED,
-                error=f"RunContext not found for run_id '{run_id}'",
-                is_retryable=False,
+        if self._lease_manager is not None and settings.worker_lease_enabled:
+            lease = await self._lease_manager.acquire_lease(
+                run_id=run_id,
+                worker_id=self._worker_id,
+                duration_seconds=settings.worker_lease_duration_seconds,
             )
+            if lease is None:
+                logger.warning(
+                    "Worker '%s' could not acquire lease for run '%s' (active lease held).",
+                    self._worker_id,
+                    run_id,
+                )
+                return envelope.with_status(
+                    JobStatus.QUEUED,
+                    error="Lease acquisition conflict: run is currently leased",
+                    is_retryable=True,
+                )
 
-        async def _sync_to_repo() -> None:
-            if self._run_repo is not None and context is not None:
-                existing = await self._run_repo.get_run(run_id)
-                if existing is not None:
-                    await self._run_repo.update_run(
-                        existing.with_updates(
-                            status=context.status,
-                            plan_id=context.plan_id,
-                            completed_task_ids=context.completed_task_ids,
-                            failed_task_ids=context.failed_task_ids,
-                            cancelled_task_ids=context.cancelled_task_ids,
-                            total_token_usage=context.total_token_usage,
-                            duration_seconds=context.duration_seconds,
-                            dossier=context.dossier,
-                            artifacts=context.artifacts,
-                            error=context.error,
-                            is_cancelled=context.cancellation_token.is_cancelled,
-                        )
-                    )
-
-        # 3. Check for already completed or cancelled run (Idempotent At-Least-Once Delivery Protection)
-        if context.status == RunStage.COMPLETED:
-            return envelope.with_status(JobStatus.COMPLETED)
-
-        if (
-            context.status == RunStage.CANCELLED
-            or context.cancellation_token.is_cancelled
-        ):
-            context.status = RunStage.CANCELLED
-            context.duration_seconds = time.monotonic() - context.start_time
-            await _sync_to_repo()
-            return envelope.with_status(JobStatus.CANCELLED)
-
-        context.status = RunStage.PLANNING
-        await _sync_to_repo()
+            heartbeat = WorkerHeartbeat(
+                lease_manager=self._lease_manager,
+                run_id=run_id,
+                worker_id=self._worker_id,
+                lease_id=lease.lease_id,
+                interval_seconds=settings.worker_heartbeat_interval_seconds,
+                lease_duration_seconds=settings.worker_lease_duration_seconds,
+            )
+            heartbeat.start()
 
         try:
-            # 4. PlannerWorker Decomposes the Goal
-            planner_req = AgentRequest(
-                request_id=f"req_plan_{run_id}",
-                run_id=run_id,
-                subtask_id="planner_task",
-                agent_role=AgentRole.PLANNER,
-                task_type=TaskType.DECOMPOSITION,
-                goal_context=goal_query,
-                input_data={
-                    "goal_query": goal_query,
-                    "domain_tags": list(envelope.domain_tags),
-                    "constraints": envelope.constraints,
-                    "max_subtasks": envelope.max_subtasks,
-                },
-                idempotency_key=f"idem_plan_{run_id}",
-            )
+            # 2. Resolve RunContext
+            context = self._resolver(run_id) if self._resolver is not None else None
 
-            planner_env: WorkerResponseEnvelope = await self._router.execute(
-                planner_req
-            )
+            if context is None and self._run_repo is not None:
+                record = await self._run_repo.get_run(run_id)
+                if record is not None:
+                    token = CancellationToken()
+                    if record.is_cancelled:
+                        token.cancel(record.cancellation_reason or "Cancelled")
+                    context = RunContext(
+                        run_id=record.run_id,
+                        goal=record.goal,
+                        cancellation_token=token,
+                        event_sink=InMemoryEventSink(),
+                        checkpoint_repo=self._checkpoint_repo
+                        or InMemoryCheckpointRepository(),
+                    )
+                    context.status = record.status
+                    context.plan_id = record.plan_id
+                    context.completed_task_ids = list(record.completed_task_ids)
+                    context.failed_task_ids = list(record.failed_task_ids)
+                    context.cancelled_task_ids = list(record.cancelled_task_ids)
+                    context.total_token_usage = record.total_token_usage
+                    context.duration_seconds = record.duration_seconds
+                    context.dossier = record.dossier
+                    context.artifacts = list(record.artifacts)
+                    context.error = record.error
 
-            if planner_env.status != TaskStatus.COMPLETED or not planner_env.response:
-                err_msg = (
-                    planner_env.error.message
-                    if planner_env.error
-                    else "Planning phase failed"
-                )
-                is_ret = planner_env.error.is_retryable if planner_env.error else False
-                context.status = RunStage.FAILED
-                context.error = err_msg
-                context.duration_seconds = time.monotonic() - context.start_time
-                await _sync_to_repo()
+            if context is None:
                 return envelope.with_status(
-                    JobStatus.FAILED, error=err_msg, is_retryable=is_ret
+                    JobStatus.FAILED,
+                    error=f"RunContext not found for run_id '{run_id}'",
+                    is_retryable=False,
                 )
 
-            # 5. Extract planned nodes and edges
-            planned_subtasks = planner_env.response.output_data.get(
-                "planned_subtasks", []
-            )
-            raw_edges = planner_env.response.output_data.get("edges", [])
-            plan_id = planner_env.response.output_data.get("plan_id", f"plan_{run_id}")
-            context.plan_id = plan_id
+            async def _sync_to_repo() -> None:
+                if self._run_repo is not None and context is not None:
+                    existing = await self._run_repo.get_run(run_id)
+                    if existing is not None:
+                        await self._run_repo.update_run(
+                            existing.with_updates(
+                                status=context.status,
+                                plan_id=context.plan_id,
+                                completed_task_ids=context.completed_task_ids,
+                                failed_task_ids=context.failed_task_ids,
+                                cancelled_task_ids=context.cancelled_task_ids,
+                                total_token_usage=context.total_token_usage,
+                                duration_seconds=context.duration_seconds,
+                                dossier=context.dossier,
+                                artifacts=context.artifacts,
+                                error=context.error,
+                                is_cancelled=context.cancellation_token.is_cancelled,
+                                worker_id=self._worker_id if lease else None,
+                                lease_id=lease.lease_id if lease else None,
+                            )
+                        )
 
-            nodes: dict[str, SubtaskNode] = {}
-            for st in planned_subtasks:
-                if isinstance(st, dict):
-                    node = SubtaskNode.model_validate(st)
-                elif isinstance(st, SubtaskNode):
-                    node = st
-                else:
-                    continue
-                nodes[node.subtask_id] = node
+            # 3. Check for already completed or cancelled run (Idempotent At-Least-Once Delivery Protection)
+            if context.status == RunStage.COMPLETED:
+                return envelope.with_status(JobStatus.COMPLETED)
 
-            edges_list: list[DependencyEdge] = [
-                DependencyEdge.model_validate(e) if isinstance(e, dict) else e
-                for e in raw_edges
-            ]
-
-            # Ensure downstream synthesis -> verification -> evaluation -> reporting chain if absent
-            self._ensure_complete_research_mesh(nodes, edges_list, goal_query)
-
-            plan = ResearchPlan(
-                plan_id=plan_id,
-                run_id=run_id,
-                goal=context.goal,
-                nodes=nodes,
-                edges=tuple(edges_list),
-            )
-
-            # 6. Check for cancellation prior to DAG execution
-            if context.cancellation_token.is_cancelled:
+            if (
+                context.status == RunStage.CANCELLED
+                or context.cancellation_token.is_cancelled
+            ):
                 context.status = RunStage.CANCELLED
                 context.duration_seconds = time.monotonic() - context.start_time
                 await _sync_to_repo()
                 return envelope.with_status(JobStatus.CANCELLED)
-
-            # 7. Execute DAG with DAGExecutor and AgentWorkerRouter
-            context.status = RunStage.RESEARCHING
-            await _sync_to_repo()
 
             tracer = get_tracer()
             metrics = get_metrics()
@@ -264,9 +231,119 @@ class ResearchJobWorker(JobHandlerProtocol):
                 ),
             )
 
-            result: ExecutionResult = await executor.execute_plan(
-                plan=plan, cancellation_token=context.cancellation_token
-            )
+            # Check for existing checkpoint resumption
+            existing_ckpt = None
+            if context.checkpoint_repo is not None:
+                with contextlib.suppress(Exception):
+                    existing_ckpt = (
+                        await context.checkpoint_repo.load_latest_checkpoint(run_id)
+                    )
+
+            if (
+                existing_ckpt is not None
+                and existing_ckpt.stage == RunStage.RESEARCHING
+            ):
+                context.status = RunStage.RESEARCHING
+                await _sync_to_repo()
+                result: ExecutionResult = await executor.resume_from_checkpoint(
+                    snapshot=existing_ckpt,
+                    cancellation_token=context.cancellation_token,
+                )
+            else:
+                context.status = RunStage.PLANNING
+                await _sync_to_repo()
+
+                # 4. PlannerWorker Decomposes the Goal
+                planner_req = AgentRequest(
+                    request_id=f"req_plan_{run_id}",
+                    run_id=run_id,
+                    subtask_id="planner_task",
+                    agent_role=AgentRole.PLANNER,
+                    task_type=TaskType.DECOMPOSITION,
+                    goal_context=goal_query,
+                    input_data={
+                        "goal_query": goal_query,
+                        "domain_tags": list(envelope.domain_tags),
+                        "constraints": envelope.constraints,
+                        "max_subtasks": envelope.max_subtasks,
+                    },
+                    idempotency_key=f"idem_plan_{run_id}",
+                )
+
+                planner_env: WorkerResponseEnvelope = await self._router.execute(
+                    planner_req
+                )
+
+                if (
+                    planner_env.status != TaskStatus.COMPLETED
+                    or not planner_env.response
+                ):
+                    err_msg = (
+                        planner_env.error.message
+                        if planner_env.error
+                        else "Planning phase failed"
+                    )
+                    is_ret = (
+                        planner_env.error.is_retryable if planner_env.error else False
+                    )
+                    context.status = RunStage.FAILED
+                    context.error = err_msg
+                    context.duration_seconds = time.monotonic() - context.start_time
+                    await _sync_to_repo()
+                    return envelope.with_status(
+                        JobStatus.FAILED, error=err_msg, is_retryable=is_ret
+                    )
+
+                # 5. Extract planned nodes and edges
+                planned_subtasks = planner_env.response.output_data.get(
+                    "planned_subtasks", []
+                )
+                raw_edges = planner_env.response.output_data.get("edges", [])
+                plan_id = planner_env.response.output_data.get(
+                    "plan_id", f"plan_{run_id}"
+                )
+                context.plan_id = plan_id
+
+                nodes: dict[str, SubtaskNode] = {}
+                for st in planned_subtasks:
+                    if isinstance(st, dict):
+                        node = SubtaskNode.model_validate(st)
+                    elif isinstance(st, SubtaskNode):
+                        node = st
+                    else:
+                        continue
+                    nodes[node.subtask_id] = node
+
+                edges_list: list[DependencyEdge] = [
+                    DependencyEdge.model_validate(e) if isinstance(e, dict) else e
+                    for e in raw_edges
+                ]
+
+                # Ensure downstream synthesis -> verification -> evaluation -> reporting chain if absent
+                self._ensure_complete_research_mesh(nodes, edges_list, goal_query)
+
+                plan = ResearchPlan(
+                    plan_id=plan_id,
+                    run_id=run_id,
+                    goal=context.goal,
+                    nodes=nodes,
+                    edges=tuple(edges_list),
+                )
+
+                # 6. Check for cancellation prior to DAG execution
+                if context.cancellation_token.is_cancelled:
+                    context.status = RunStage.CANCELLED
+                    context.duration_seconds = time.monotonic() - context.start_time
+                    await _sync_to_repo()
+                    return envelope.with_status(JobStatus.CANCELLED)
+
+                # 7. Execute DAG with DAGExecutor and AgentWorkerRouter
+                context.status = RunStage.RESEARCHING
+                await _sync_to_repo()
+
+                result = await executor.execute_plan(
+                    plan=plan, cancellation_token=context.cancellation_token
+                )
 
             # 8. Record Results in Context
             context.status = result.status
@@ -407,6 +484,42 @@ class ResearchJobWorker(JobHandlerProtocol):
                             context.dossier = ResearchDossier.model_validate(output)
                             break
 
+                    if context.dossier is None:
+                        rep_req = AgentRequest(
+                            request_id=f"req_rep_init_{run_id}",
+                            run_id=run_id,
+                            subtask_id="task_rep_init",
+                            agent_role=AgentRole.REPORTER,
+                            task_type=TaskType.REPORTING,
+                            goal_context=goal_query,
+                            input_data={
+                                "goal_query": goal_query,
+                                "findings": self._extract_all_findings(
+                                    result.task_outputs
+                                ),
+                                "claims": self._extract_all_claims(result.task_outputs),
+                                "citations": self._extract_all_citations(
+                                    result.task_outputs
+                                ),
+                                "contradictions": self._extract_all_contradictions(
+                                    result.task_outputs
+                                ),
+                                "evaluation": (
+                                    eval_report.model_dump() if eval_report else None
+                                ),
+                            },
+                            idempotency_key=f"idem_rep_init_{run_id}",
+                        )
+                        rep_env = await self._router.execute(rep_req)
+                        if (
+                            rep_env.status == TaskStatus.COMPLETED
+                            and rep_env.response
+                            and rep_env.response.output_data
+                        ):
+                            context.dossier = ResearchDossier.model_validate(
+                                rep_env.response.output_data
+                            )
+
                 # Persist durable artifacts if storage provider is available
                 if context.dossier is not None and self._artifact_storage is not None:
                     try:
@@ -456,13 +569,24 @@ class ResearchJobWorker(JobHandlerProtocol):
             )
 
         except Exception as e:
-            context.status = RunStage.FAILED
-            context.error = str(e)
-            context.duration_seconds = time.monotonic() - context.start_time
-            await _sync_to_repo()
+            if context is not None:
+                context.status = RunStage.FAILED
+                context.error = str(e)
+                context.duration_seconds = time.monotonic() - context.start_time
+                await _sync_to_repo()
             return envelope.with_status(
                 JobStatus.FAILED, error=str(e), is_retryable=True
             )
+        finally:
+            if heartbeat is not None:
+                await heartbeat.stop()
+            if lease is not None and self._lease_manager is not None:
+                with contextlib.suppress(Exception):
+                    await self._lease_manager.release_lease(
+                        run_id=run_id,
+                        worker_id=self._worker_id,
+                        lease_id=lease.lease_id,
+                    )
 
     def _extract_eval_report(
         self, task_outputs: dict[str, Any]

@@ -21,7 +21,7 @@ def _create_firestore_async_client(project_id: str | None, database: str) -> Any
     try:
         from google.cloud import firestore
 
-        return firestore.AsyncClient(project=project_id, database=database)
+        return firestore.AsyncClient(project=project_id, database=database)  # type: ignore[attr-defined]
     except ImportError as e:
         raise RuntimeError(
             "google-cloud-firestore is required for Firestore persistence. "

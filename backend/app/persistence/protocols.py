@@ -94,6 +94,36 @@ class RunRecord(BaseModel):
     cancellation_reason: str | None = Field(
         default=None, description="Reason recorded when cancellation was requested"
     )
+    # Phase 7.1 — Worker Lease & Failure Recovery
+    worker_id: str | None = Field(
+        default=None,
+        description="Active worker process identifier holding execution lease",
+    )
+    lease_id: str | None = Field(
+        default=None,
+        description="Unique lease instance identifier",
+    )
+    lease_acquired_at: datetime | None = Field(
+        default=None,
+        description="Timestamp when current worker lease was acquired",
+    )
+    lease_expires_at: datetime | None = Field(
+        default=None,
+        description="Timestamp when current worker lease expires",
+    )
+    heartbeat_at: datetime | None = Field(
+        default=None,
+        description="Timestamp of the most recent worker heartbeat",
+    )
+    recovery_attempt: int = Field(
+        default=0,
+        ge=0,
+        description="Cumulative count of automatic failure recovery attempts",
+    )
+    last_checkpoint_id: str | None = Field(
+        default=None,
+        description="Identifier of the latest verified checkpoint",
+    )
     version: int = Field(
         default=1, ge=1, description="Optimistic locking sequence version"
     )
@@ -119,6 +149,14 @@ class RunRecord(BaseModel):
         error: str | None = None,
         is_cancelled: bool | None = None,
         cancellation_reason: str | None = None,
+        worker_id: str | None = None,
+        lease_id: str | None = None,
+        lease_acquired_at: datetime | None = None,
+        lease_expires_at: datetime | None = None,
+        heartbeat_at: datetime | None = None,
+        recovery_attempt: int | None = None,
+        last_checkpoint_id: str | None = None,
+        clear_lease: bool = False,
         increment_version: bool = True,
     ) -> "RunRecord":
         """Produce an updated immutable copy of this RunRecord with incremented version."""
@@ -150,6 +188,27 @@ class RunRecord(BaseModel):
             dump["is_cancelled"] = is_cancelled
         if cancellation_reason is not None:
             dump["cancellation_reason"] = cancellation_reason
+        if clear_lease:
+            dump["worker_id"] = None
+            dump["lease_id"] = None
+            dump["lease_acquired_at"] = None
+            dump["lease_expires_at"] = None
+            dump["heartbeat_at"] = None
+        else:
+            if worker_id is not None:
+                dump["worker_id"] = worker_id
+            if lease_id is not None:
+                dump["lease_id"] = lease_id
+            if lease_acquired_at is not None:
+                dump["lease_acquired_at"] = lease_acquired_at
+            if lease_expires_at is not None:
+                dump["lease_expires_at"] = lease_expires_at
+            if heartbeat_at is not None:
+                dump["heartbeat_at"] = heartbeat_at
+        if recovery_attempt is not None:
+            dump["recovery_attempt"] = recovery_attempt
+        if last_checkpoint_id is not None:
+            dump["last_checkpoint_id"] = last_checkpoint_id
         if increment_version:
             dump["version"] = self.version + 1
         dump["updated_at"] = _utc_now()

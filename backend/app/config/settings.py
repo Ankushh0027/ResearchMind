@@ -601,6 +601,41 @@ class AppSettings(BaseSettings):
         description="Enable autonomous self-correction and inquiry refinement when evaluation score < 0.85.",
     )
 
+    # Phase 7.1 — Production Reliability, Worker Leases & Automatic Failure Recovery
+    worker_lease_enabled: bool = Field(
+        default=True,
+        alias="WORKER_LEASE_ENABLED",
+        description="Enable worker lease ownership and heartbeat renewal during job processing.",
+    )
+    worker_heartbeat_interval_seconds: float = Field(
+        default=10.0,
+        ge=0.5,
+        le=300.0,
+        alias="WORKER_HEARTBEAT_INTERVAL_SECONDS",
+        description="Interval in seconds between worker lease heartbeat renewals.",
+    )
+    worker_lease_duration_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=600.0,
+        alias="WORKER_LEASE_DURATION_SECONDS",
+        description="Lease TTL duration in seconds granted to active worker before expiration.",
+    )
+    worker_max_recovery_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        alias="WORKER_MAX_RECOVERY_ATTEMPTS",
+        description="Maximum number of failure recovery attempts before marking a run permanently FAILED.",
+    )
+    supervisor_scan_interval_seconds: float = Field(
+        default=15.0,
+        ge=0.5,
+        le=300.0,
+        alias="SUPERVISOR_SCAN_INTERVAL_SECONDS",
+        description="Polling interval in seconds for the background lease supervisor reaper.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:

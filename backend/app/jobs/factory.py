@@ -75,7 +75,30 @@ def create_job_consumer(
     )
 
 
+def create_lease_manager(
+    settings: AppSettings | None = None,
+    run_repo: Any = None,
+    firestore_client: Any = None,
+) -> Any:
+    """Instantiate configured LeaseManagerProtocol (InMemory or Firestore)."""
+    cfg = settings or get_settings()
+    if cfg.persistence_backend == "firestore":
+        from app.jobs.lease import FirestoreLeaseManager
+
+        return FirestoreLeaseManager(
+            client=firestore_client,
+            project_id=cfg.gcp_project_id,
+            database=cfg.firestore_database,
+            collection_name=cfg.firestore_runs_collection,
+        )
+    from app.jobs.lease import InMemoryLeaseManager
+    from app.persistence.in_memory import InMemoryRunRepository
+
+    return InMemoryLeaseManager(run_repo or InMemoryRunRepository())
+
+
 __all__ = [
     "create_job_consumer",
     "create_job_publisher",
+    "create_lease_manager",
 ]
