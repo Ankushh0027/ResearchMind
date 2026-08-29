@@ -1,0 +1,48 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: researchmind-worker
+  annotations:
+    run.googleapis.com/ingress: internal
+    run.googleapis.com/description: "ResearchMind Asynchronous Research Job Worker"
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "20"
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 4
+      timeoutSeconds: 900
+      containers:
+      - image: gcr.io/PROJECT_ID/researchmind:latest
+        command:
+        - python
+        - -m
+        - app.jobs.main
+        resources:
+          limits:
+            cpu: 4000m
+            memory: 4096Mi
+        env:
+        - name: APP_ENV
+          value: production
+        - name: LOG_LEVEL
+          value: INFO
+        - name: STORAGE_BACKEND
+          value: gcs
+        - name: GCS_BUCKET_NAME
+          value: PROJECT_ID-researchmind-artifacts
+        - name: PUBSUB_PROJECT_ID
+          value: PROJECT_ID
+        - name: PUBSUB_TASKS_TOPIC
+          value: researchmind-tasks
+        - name: PUBSUB_TASKS_SUBSCRIPTION
+          value: researchmind-tasks-sub
+        - name: WORKER_CONCURRENCY
+          value: "4"
+        - name: MAX_ORCHESTRATION_CONCURRENCY
+          value: "8"
+        - name: GEMINI_MODEL
+          value: gemini-2.5-pro

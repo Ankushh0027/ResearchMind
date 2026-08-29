@@ -35,6 +35,9 @@ dependencies = [
     "httpx>=0.27.0",
 ]
 
+[project.scripts]
+researchmind = "app.cli.main:cli"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",

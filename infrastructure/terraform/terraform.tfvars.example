@@ -1,0 +1,20 @@
+# Example Terraform Variable Values for ResearchMind Production Deployment
+# Copy this file to terraform.tfvars and fill with your actual GCP configuration.
+
+project_id  = "my-gcp-project-id"
+region      = "us-central1"
+environment = "production"
+
+api_image    = "gcr.io/my-gcp-project-id/researchmind-api:latest"
+worker_image = "gcr.io/my-gcp-project-id/researchmind-worker:latest"
+
+api_min_instances    = 0
+api_max_instances    = 10
+worker_min_instances = 0
+worker_max_instances = 20
+
+worker_concurrency            = 4
+max_orchestration_concurrency = 8
+
+gemini_model = "gemini-2.5-pro"
+qdrant_url   = "https://your-qdrant-cluster.cloud.qdrant.io:6333"

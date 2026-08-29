@@ -125,7 +125,7 @@ class GeminiEmbeddingModel(EmbeddingModelProtocol):
         try:
             from google import genai
 
-            self._client = genai.Client(api_key=self.api_key)
+            self._client = genai.Client(api_key=self.api_key)  # type: ignore[attr-defined]
             return self._client
         except ImportError as e:
             raise RuntimeError(
