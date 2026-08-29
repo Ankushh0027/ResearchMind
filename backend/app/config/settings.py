@@ -1,9 +1,10 @@
 """Application configuration and settings contracts using Pydantic Settings."""
 
+import json as _json
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -406,6 +407,121 @@ class AppSettings(BaseSettings):
         default="json",
         alias="LOG_FORMAT",
         description="Output log format for Cloud Logging or terminal debugging",
+    )
+
+    # -------------------------------------------------------------------------
+    # Phase 6.5 — API Security, Authentication & Request Protection
+    # -------------------------------------------------------------------------
+
+    # API-Key Authentication
+    api_auth_enabled: bool = Field(
+        default=False,
+        alias="API_AUTH_ENABLED",
+        description=(
+            "Enable API-key authentication for protected endpoints. "
+            "Defaults to False so the test suite and local development remain "
+            "deterministic without requiring a real key."
+        ),
+    )
+    api_key: str = Field(
+        default="",
+        alias="API_KEY",
+        description=(
+            "Shared API key for Bearer-token authentication. "
+            "Never hardcode or log this value. "
+            "Only used when API_AUTH_ENABLED=true."
+        ),
+    )
+
+    # CORS Configuration
+    # Stored as a raw string so pydantic-settings passes the env var through
+    # without attempting JSON parsing on a comma-delimited value.
+    cors_allowed_origins_raw: str = Field(
+        default="http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000",
+        alias="CORS_ALLOWED_ORIGINS",
+        description=(
+            "Comma-delimited or JSON-array list of allowed CORS origins. "
+            "Wildcard '*' is disallowed when credentials are enabled."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _parse_cors_origins(self) -> "AppSettings":
+        """Parse cors_allowed_origins_raw and store result on the model."""
+        raw = self.cors_allowed_origins_raw.strip()
+        if raw.startswith("["):
+            try:
+                parsed: list[Any] = _json.loads(raw)
+                self._cors_origins = tuple(
+                    str(o).strip() for o in parsed if str(o).strip()
+                )
+            except _json.JSONDecodeError:
+                self._cors_origins = (raw,) if raw else ()
+        else:
+            self._cors_origins = tuple(o.strip() for o in raw.split(",") if o.strip())
+        return self
+
+    @property
+    def cors_allowed_origins(self) -> tuple[str, ...]:
+        """Return the parsed CORS allowed origins as a tuple of strings."""
+        # Populated by _parse_cors_origins model_validator.
+        return getattr(
+            self,
+            "_cors_origins",
+            (
+                "http://localhost:3000",
+                "http://localhost:8080",
+                "http://127.0.0.1:3000",
+            ),
+        )
+
+    # Rate Limiting
+    rate_limit_enabled: bool = Field(
+        default=False,
+        alias="RATE_LIMIT_ENABLED",
+        description=(
+            "Enable in-process sliding-window rate limiting on research submission endpoints. "
+            "NOTE: This limiter is process-local and NOT distributed across multiple instances. "
+            "For multi-instance production deployments, replace with a Redis-backed implementation "
+            "via the RateLimiterProtocol interface."
+        ),
+    )
+    rate_limit_requests: int = Field(
+        default=60,
+        ge=1,
+        le=10000,
+        alias="RATE_LIMIT_REQUESTS",
+        description="Maximum number of requests allowed per rate-limit window per client IP.",
+    )
+    rate_limit_window_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        alias="RATE_LIMIT_WINDOW_SECONDS",
+        description="Sliding window duration in seconds for rate limiting.",
+    )
+
+    # Request Size Limits
+    max_research_goal_length: int = Field(
+        default=4000,
+        ge=10,
+        le=100000,
+        alias="MAX_RESEARCH_GOAL_LENGTH",
+        description=(
+            "Maximum character length for research goal queries submitted to /api/v1/runs. "
+            "Requests exceeding this limit are rejected with HTTP 422."
+        ),
+    )
+    max_request_body_bytes: int = Field(
+        default=1_048_576,  # 1 MiB
+        ge=64,
+        le=104_857_600,  # 100 MiB upper safety cap
+        alias="MAX_REQUEST_BODY_BYTES",
+        description=(
+            "Maximum allowed request body size in bytes. "
+            "Requests exceeding this limit are rejected at the ASGI middleware boundary "
+            "with HTTP 413 before consuming the full body stream."
+        ),
     )
 
 

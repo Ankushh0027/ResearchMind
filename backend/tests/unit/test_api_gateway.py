@@ -60,7 +60,8 @@ async def test_get_research_run_not_found(api_client: AsyncClient) -> None:
     response = await api_client.get("/api/v1/runs/run_unknown_999")
     assert response.status_code == 404
     data = response.json()
-    assert "not found" in data["detail"].lower()
+    # Phase 6.5: error responses use the structured ErrorResponse schema
+    assert "not found" in data.get("message", data.get("detail", "")).lower()
 
 
 @pytest.mark.asyncio

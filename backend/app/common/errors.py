@@ -514,3 +514,65 @@ class ReportingError(ResearchMindError):
         merged_details["error_code"] = code
         super().__init__(message, merged_details)
         self.code = code
+
+
+# ---------------------------------------------------------------------------
+# Phase 6.5 — API Security, Authentication & Request Protection Errors
+# ---------------------------------------------------------------------------
+
+
+class APIAuthenticationError(ResearchMindError):
+    """Raised when an API request lacks valid credentials or presents an invalid API key."""
+
+    def __init__(
+        self,
+        reason: str = "Invalid or missing API key",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = "UNAUTHORIZED"
+        super().__init__(reason, merged_details)
+        self.code = "UNAUTHORIZED"
+
+
+class RateLimitExceededError(ResearchMindError):
+    """Raised when a client exceeds the configured request rate limit threshold."""
+
+    def __init__(
+        self,
+        retry_after_seconds: int,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = "RATE_LIMIT_EXCEEDED"
+        merged_details["retry_after_seconds"] = retry_after_seconds
+        super().__init__(
+            f"Rate limit exceeded. Retry after {retry_after_seconds} seconds.",
+            merged_details,
+        )
+        self.code = "RATE_LIMIT_EXCEEDED"
+        self.retry_after_seconds = retry_after_seconds
+
+
+class RequestPayloadTooLargeError(ResearchMindError):
+    """Raised when a request body exceeds the configured maximum byte limit."""
+
+    def __init__(
+        self,
+        byte_count: int | None = None,
+        max_bytes: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = details or {}
+        merged_details["error_code"] = "PAYLOAD_TOO_LARGE"
+        if byte_count is not None:
+            merged_details["byte_count"] = byte_count
+        if max_bytes is not None:
+            merged_details["max_bytes"] = max_bytes
+        super().__init__(
+            "Request payload exceeds the maximum allowed size.",
+            merged_details,
+        )
+        self.code = "PAYLOAD_TOO_LARGE"
+        self.byte_count = byte_count
+        self.max_bytes = max_bytes

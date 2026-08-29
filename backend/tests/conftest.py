@@ -10,3 +10,11 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEBUG", "false")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("GCP_PROJECT_ID", "test-gcp-project")
+    # Phase 6.5: disable auth and rate limiting by default so existing tests
+    # remain deterministic without needing credentials.
+    monkeypatch.setenv("API_AUTH_ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
+    # Clear the settings LRU cache so each test starts clean.
+    from app.config.settings import get_settings
+
+    get_settings.cache_clear()
