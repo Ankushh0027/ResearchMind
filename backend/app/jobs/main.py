@@ -16,6 +16,7 @@ from app.persistence.factory import (
     create_checkpoint_repository,
     create_run_repository,
 )
+from app.storage.factory import create_artifact_storage
 
 logger = logging.getLogger("researchmind.worker")
 
@@ -36,10 +37,12 @@ class StandaloneWorkerRunner:
         if consumer is None:
             self._run_repo = create_run_repository(self.settings)
             self._checkpoint_repo = create_checkpoint_repository(self.settings)
+            self._artifact_storage = create_artifact_storage(self.settings)
             self._worker = ResearchJobWorker(
                 router=create_default_worker_router(),
                 run_repo=self._run_repo,
                 checkpoint_repo=self._checkpoint_repo,
+                artifact_storage=self._artifact_storage,
                 max_concurrency=self.settings.max_orchestration_concurrency,
             )
             self._consumer = create_job_consumer(

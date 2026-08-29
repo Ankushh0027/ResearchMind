@@ -524,6 +524,40 @@ class AppSettings(BaseSettings):
         ),
     )
 
+    # Phase 6.6 — Durable Artifact Storage (GCS / In-Memory)
+    artifact_storage_provider: Literal["in_memory", "gcs"] = Field(
+        default="in_memory",
+        alias="ARTIFACT_STORAGE_PROVIDER",
+        description="Underlying storage provider for durable research artifacts ('in_memory' or 'gcs').",
+    )
+    gcs_bucket: str = Field(
+        default="researchmind-artifacts",
+        alias="GCS_BUCKET",
+        description="Google Cloud Storage bucket name for persistent artifact storage.",
+    )
+    gcs_project: str | None = Field(
+        default=None,
+        alias="GCS_PROJECT",
+        description="Google Cloud Platform project ID for GCS operations (defaults to GCP_PROJECT_ID if None).",
+    )
+    gcs_prefix: str = Field(
+        default="artifacts",
+        alias="GCS_PREFIX",
+        description="Object path prefix for research artifacts in GCS.",
+    )
+    gcs_artifact_retention_days: int | None = Field(
+        default=None,
+        alias="GCS_ARTIFACT_RETENTION_DAYS",
+        description="Optional retention lifecycle in days for research artifacts.",
+    )
+    gcs_signed_url_expiration_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=604800,
+        alias="GCS_SIGNED_URL_EXPIRATION_SECONDS",
+        description="Expiration duration in seconds for GCS signed download URLs (default 1 hour).",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.common.enums import RunStage
 from app.intelligence.models import ResearchDossier
 from app.orchestration.contracts import TokenUsage
+from app.storage.models import ArtifactMetadata
 
 
 def _utc_now() -> datetime:
@@ -83,6 +84,10 @@ class RunDetailResponse(BaseModel):
     )
     dossier: ResearchDossier | None = Field(
         default=None, description="Final compiled ResearchDossier if completed"
+    )
+    artifacts: tuple[ArtifactMetadata, ...] = Field(
+        default_factory=tuple,
+        description="Durable artifact references (reports, dossiers, checkpoints)",
     )
     error: str | None = Field(
         default=None, description="Terminal error message if failed"

@@ -15,10 +15,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
@@ -28,16 +28,16 @@ jobs:
 
       - name: Run Ruff Lint
         run: |
-          ruff check .
+          python -m ruff check .
 
       - name: Run Ruff Format Check
         run: |
-          ruff format --check .
+          python -m ruff format --check .
 
       - name: Run Mypy Type Checker
         run: |
-          mypy
+          python -m mypy --config-file pyproject.toml
 
       - name: Run Pytest Suite
         run: |
-          pytest
+          python -m pytest

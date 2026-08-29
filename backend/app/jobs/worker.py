@@ -34,6 +34,8 @@ from app.state.models import (
     ResearchPlan,
     SubtaskNode,
 )
+from app.storage.models import ArtifactType
+from app.storage.protocols import ArtifactStorageProtocol
 
 
 class ResearchJobWorker(JobHandlerProtocol):
@@ -45,12 +47,14 @@ class ResearchJobWorker(JobHandlerProtocol):
         run_context_resolver: RunContextResolver | None = None,
         run_repo: RunRepositoryProtocol | None = None,
         checkpoint_repo: CheckpointRepositoryProtocol | None = None,
+        artifact_storage: ArtifactStorageProtocol | None = None,
         max_concurrency: int = 4,
     ) -> None:
         self._router = router or create_default_worker_router()
         self._resolver = run_context_resolver
         self._run_repo = run_repo
         self._checkpoint_repo = checkpoint_repo
+        self._artifact_storage = artifact_storage
         self._max_concurrency = max_concurrency
 
     def set_run_context_resolver(self, resolver: RunContextResolver) -> None:
@@ -64,6 +68,10 @@ class ResearchJobWorker(JobHandlerProtocol):
     def set_checkpoint_repository(self, repo: CheckpointRepositoryProtocol) -> None:
         """Configure or update the CheckpointRepository."""
         self._checkpoint_repo = repo
+
+    def set_artifact_storage(self, storage: ArtifactStorageProtocol) -> None:
+        """Configure or update the ArtifactStorage backend."""
+        self._artifact_storage = storage
 
     async def handle_job(self, envelope: JobEnvelope) -> JobEnvelope:
         """Execute goal decomposition and research DAG for a given job envelope."""
@@ -110,6 +118,7 @@ class ResearchJobWorker(JobHandlerProtocol):
                 context.total_token_usage = record.total_token_usage
                 context.duration_seconds = record.duration_seconds
                 context.dossier = record.dossier
+                context.artifacts = list(record.artifacts)
                 context.error = record.error
 
         if context is None:
@@ -133,6 +142,7 @@ class ResearchJobWorker(JobHandlerProtocol):
                             total_token_usage=context.total_token_usage,
                             duration_seconds=context.duration_seconds,
                             dossier=context.dossier,
+                            artifacts=context.artifacts,
                             error=context.error,
                             is_cancelled=context.cancellation_token.is_cancelled,
                         )
@@ -271,6 +281,43 @@ class ResearchJobWorker(JobHandlerProtocol):
                     ):
                         context.dossier = ResearchDossier.model_validate(output)
                         break
+
+                # Persist durable artifacts if storage provider is available
+                if context.dossier is not None and self._artifact_storage is not None:
+                    try:
+                        report_meta = await self._artifact_storage.upload(
+                            run_id=run_id,
+                            artifact_type=ArtifactType.REPORT_MARKDOWN,
+                            content=context.dossier.markdown_report,
+                            filename="report.md",
+                            content_type="text/markdown",
+                            metadata={
+                                "dossier_id": context.dossier.dossier_id,
+                                "confidence_rating": context.dossier.confidence_rating,
+                            },
+                        )
+                        context.artifacts.append(report_meta)
+
+                        dossier_meta = await self._artifact_storage.upload(
+                            run_id=run_id,
+                            artifact_type=ArtifactType.DOSSIER_JSON,
+                            content=context.dossier.model_dump_json(),
+                            filename="dossier.json",
+                            content_type="application/json",
+                            metadata={
+                                "dossier_id": context.dossier.dossier_id,
+                            },
+                        )
+                        context.artifacts.append(dossier_meta)
+                    except Exception as upload_err:
+                        # Log error without failing run status
+                        import logging
+
+                        logging.getLogger("researchmind.worker").warning(
+                            "Failed to store durable artifacts for run '%s': %s",
+                            run_id,
+                            upload_err,
+                        )
 
                 await _sync_to_repo()
                 return envelope.with_status(JobStatus.COMPLETED)

@@ -15,6 +15,7 @@ from app.orchestration.protocols import CheckpointRepositoryProtocol
 from app.orchestration.runtime import InMemoryEventSink
 from app.state.models import ResearchGoal
 from app.state.snapshot import CheckpointSnapshot
+from app.storage.models import ArtifactMetadata
 
 
 def _utc_now() -> datetime:
@@ -47,6 +48,7 @@ class RunContext:
         self.total_token_usage: TokenUsage = TokenUsage()
         self.duration_seconds: float = 0.0
         self.dossier: ResearchDossier | None = None
+        self.artifacts: list[ArtifactMetadata] = []
         self.error: str | None = None
 
 
@@ -79,6 +81,10 @@ class RunRecord(BaseModel):
     dossier: ResearchDossier | None = Field(
         default=None, description="Final compiled ResearchDossier deliverable"
     )
+    artifacts: tuple[ArtifactMetadata, ...] = Field(
+        default_factory=tuple,
+        description="Durable artifact references (reports, dossiers, checkpoints)",
+    )
     error: str | None = Field(
         default=None, description="Terminal error message if execution failed"
     )
@@ -109,6 +115,7 @@ class RunRecord(BaseModel):
         total_token_usage: TokenUsage | None = None,
         duration_seconds: float | None = None,
         dossier: ResearchDossier | None = None,
+        artifacts: tuple[ArtifactMetadata, ...] | list[ArtifactMetadata] | None = None,
         error: str | None = None,
         is_cancelled: bool | None = None,
         cancellation_reason: str | None = None,
@@ -132,6 +139,11 @@ class RunRecord(BaseModel):
             dump["duration_seconds"] = duration_seconds
         if dossier is not None:
             dump["dossier"] = dossier.model_dump()
+        if artifacts is not None:
+            dump["artifacts"] = [
+                a.model_dump() if isinstance(a, ArtifactMetadata) else a
+                for a in artifacts
+            ]
         if error is not None:
             dump["error"] = error
         if is_cancelled is not None:

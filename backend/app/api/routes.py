@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
 from app.api.schemas import (
@@ -29,6 +29,7 @@ from app.api.service import ResearchService
 from app.config.settings import AppSettings, get_settings
 from app.security.auth import verify_api_key
 from app.security.rate_limiter import rate_limit_submissions
+from app.storage.models import ArtifactMetadata
 
 router = APIRouter()
 
@@ -226,6 +227,88 @@ async def stream_run_events(
     )
 
 
+@router.get(
+    "/api/v1/runs/{run_id}/artifacts",
+    response_model=list[ArtifactMetadata],
+    tags=["Artifacts"],
+    summary="List all durable artifact references for a research run",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_run_artifacts(
+    run_id: str,
+    service: ResearchService = Depends(get_research_service),
+) -> list[ArtifactMetadata]:
+    """Retrieve the collection of persistent artifact metadata records for a run."""
+    detail = await service.get_run(run_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "NOT_FOUND",
+                "message": f"Research run '{run_id}' not found",
+            },
+        )
+    return list(detail.artifacts)
+
+
+@router.get(
+    "/api/v1/runs/{run_id}/artifacts/{artifact_id}",
+    tags=["Artifacts"],
+    summary="Download artifact binary or text content by artifact ID",
+    dependencies=[Depends(verify_api_key)],
+)
+async def get_run_artifact(
+    run_id: str,
+    artifact_id: str,
+    service: ResearchService = Depends(get_research_service),
+) -> Response:
+    """Fetch and stream raw artifact payload with ETag checksum verification."""
+    result = await service.get_artifact(run_id, artifact_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "NOT_FOUND",
+                "message": f"Artifact '{artifact_id}' not found for run '{run_id}'",
+            },
+        )
+    meta, content = result
+    return Response(
+        content=content,
+        media_type=meta.content_type,
+        headers={
+            "ETag": f'"{meta.sha256}"',
+            "Content-Disposition": f'inline; filename="{meta.object_key.split("/")[-1]}"',
+        },
+    )
+
+
+@router.get(
+    "/api/v1/runs/{run_id}/artifacts/{artifact_id}/metadata",
+    response_model=ArtifactMetadata,
+    tags=["Artifacts"],
+    summary="Get artifact metadata and checksum by artifact ID",
+    dependencies=[Depends(verify_api_key)],
+)
+async def get_run_artifact_metadata(
+    run_id: str,
+    artifact_id: str,
+    service: ResearchService = Depends(get_research_service),
+) -> ArtifactMetadata:
+    """Retrieve metadata and SHA-256 integrity hash for an artifact."""
+    result = await service.get_artifact(run_id, artifact_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "NOT_FOUND",
+                "message": f"Artifact '{artifact_id}' not found for run '{run_id}'",
+            },
+        )
+    meta, _ = result
+    return meta
+
+
 __all__ = [
     "CancelRunResponse",
     "ErrorResponse",
@@ -233,7 +316,10 @@ __all__ = [
     "create_research_run",
     "get_research_run",
     "get_research_service",
+    "get_run_artifact",
+    "get_run_artifact_metadata",
     "health_check",
+    "list_run_artifacts",
     "router",
     "set_global_service",
     "stream_run_events",

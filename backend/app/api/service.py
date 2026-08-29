@@ -43,6 +43,9 @@ from app.persistence.protocols import (
     RunRepositoryProtocol,
 )
 from app.state.models import ResearchGoal
+from app.storage.factory import create_artifact_storage
+from app.storage.models import ArtifactMetadata
+from app.storage.protocols import ArtifactStorageProtocol
 
 
 def _utc_now() -> datetime:
@@ -60,12 +63,14 @@ class ResearchService:
         worker: ResearchJobWorker | None = None,
         run_repo: RunRepositoryProtocol | None = None,
         checkpoint_repo: CheckpointRepositoryProtocol | None = None,
+        artifact_storage: ArtifactStorageProtocol | None = None,
         max_concurrency: int = 4,
     ) -> None:
         self._router = router or create_default_worker_router()
         self._max_concurrency = max_concurrency
         self._run_repo = run_repo or create_run_repository()
         self._checkpoint_repo = checkpoint_repo or create_checkpoint_repository()
+        self._artifact_storage = artifact_storage or create_artifact_storage()
         self._runs: dict[str, RunContext] = {}
         self._lock = asyncio.Lock()
 
@@ -74,11 +79,13 @@ class ResearchService:
             run_context_resolver=self._get_run_context,
             run_repo=self._run_repo,
             checkpoint_repo=self._checkpoint_repo,
+            artifact_storage=self._artifact_storage,
             max_concurrency=self._max_concurrency,
         )
         self._worker.set_run_context_resolver(self._get_run_context)
         self._worker.set_run_repository(self._run_repo)
         self._worker.set_checkpoint_repository(self._checkpoint_repo)
+        self._worker.set_artifact_storage(self._artifact_storage)
 
         queue = InMemoryJobQueue() if (publisher is None or consumer is None) else None
         self._publisher = publisher or create_job_publisher(queue=queue)
@@ -95,6 +102,11 @@ class ResearchService:
     def checkpoint_repository(self) -> CheckpointRepositoryProtocol:
         """Return the underlying CheckpointRepository."""
         return self._checkpoint_repo
+
+    @property
+    def artifact_storage(self) -> ArtifactStorageProtocol:
+        """Return the underlying ArtifactStorage."""
+        return self._artifact_storage
 
     def _get_run_context(self, run_id: str) -> RunContext | None:
         """Resolve the RunContext container for a given run ID."""
@@ -202,6 +214,7 @@ class ResearchService:
                 total_token_usage=context.total_token_usage,
                 duration_seconds=duration,
                 dossier=context.dossier,
+                artifacts=tuple(context.artifacts),
                 error=context.error,
                 created_at=context.created_at,
             )
@@ -222,9 +235,43 @@ class ResearchService:
             total_token_usage=record.total_token_usage,
             duration_seconds=record.duration_seconds,
             dossier=record.dossier,
+            artifacts=tuple(record.artifacts),
             error=record.error,
             created_at=record.created_at,
         )
+
+    async def get_artifact(
+        self, run_id: str, artifact_id: str
+    ) -> tuple[ArtifactMetadata, bytes] | None:
+        """Fetch artifact metadata and content bytes for a given run and artifact identifier."""
+        # Check in active context first
+        target_meta: ArtifactMetadata | None = None
+        context = self._runs.get(run_id)
+        if context is not None:
+            for art in context.artifacts:
+                if art.artifact_id == artifact_id or art.object_key.endswith(
+                    f"/{artifact_id}"
+                ):
+                    target_meta = art
+                    break
+
+        if target_meta is None:
+            record = await self._run_repo.get_run(run_id)
+            if record is not None:
+                for art in record.artifacts:
+                    if art.artifact_id == artifact_id or art.object_key.endswith(
+                        f"/{artifact_id}"
+                    ):
+                        target_meta = art
+                        break
+
+        if target_meta is None:
+            return None
+
+        content = await self._artifact_storage.download(
+            target_meta, verify_checksum=True
+        )
+        return target_meta, content
 
     async def cancel_run(self, run_id: str) -> CancelRunResponse:
         """Signal cooperative cancellation for an in-flight research run."""
