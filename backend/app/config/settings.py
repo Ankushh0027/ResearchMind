@@ -587,6 +587,20 @@ class AppSettings(BaseSettings):
         description="Enable automated regex sanitization of credentials and PII in logs.",
     )
 
+    # Phase 6.9 — Autonomous Self-Correction & Refinement Loop
+    max_refinement_loops: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        alias="MAX_REFINEMENT_LOOPS",
+        description="Maximum iterative refinement and self-correction cycles.",
+    )
+    refinement_enabled: bool = Field(
+        default=True,
+        alias="REFINEMENT_ENABLED",
+        description="Enable autonomous self-correction and inquiry refinement when evaluation score < 0.85.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:

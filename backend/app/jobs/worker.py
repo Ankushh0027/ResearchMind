@@ -1,6 +1,7 @@
 """Job worker gateway coordinating Planner and DAGExecutor through AgentWorkerRouter."""
 
 import time
+from typing import Any
 
 from app.common.enums import (
     AgentRole,
@@ -9,7 +10,8 @@ from app.common.enums import (
     TaskStatus,
     TaskType,
 )
-from app.intelligence.models import ResearchDossier
+from app.config.settings import get_settings
+from app.intelligence.models import EvaluationReport, ResearchDossier
 from app.jobs.protocols import (
     JobEnvelope,
     JobHandlerProtocol,
@@ -22,6 +24,7 @@ from app.orchestration.cancellation import CancellationToken
 from app.orchestration.contracts import AgentRequest, WorkerResponseEnvelope
 from app.orchestration.executor import DAGExecutor, ExecutionResult
 from app.orchestration.protocols import CheckpointRepositoryProtocol, WorkerProtocol
+from app.orchestration.refinement import RefinementPlanner
 from app.orchestration.router import create_default_worker_router
 from app.orchestration.runtime import (
     InMemoryCheckpointRepository,
@@ -279,16 +282,130 @@ class ResearchJobWorker(JobHandlerProtocol):
                 return envelope.with_status(JobStatus.CANCELLED)
 
             if result.status == RunStage.COMPLETED:
-                # Extract final ResearchDossier
-                for task_id in reversed(result.completed_task_ids):
-                    output = result.task_outputs.get(task_id, {})
-                    if (
-                        isinstance(output, dict)
-                        and "dossier_id" in output
-                        and "markdown_report" in output
-                    ):
-                        context.dossier = ResearchDossier.model_validate(output)
+                # ------------------------------------------------------------------
+                # Phase 6.9: Autonomous Self-Correction & Refinement Loop
+                # ------------------------------------------------------------------
+                settings = get_settings()
+                max_refinement_loops = settings.max_refinement_loops
+                refinement_enabled = settings.refinement_enabled
+
+                eval_report = self._extract_eval_report(result.task_outputs)
+                iteration = 0
+                all_task_outputs = dict(result.task_outputs)
+
+                while (
+                    refinement_enabled
+                    and eval_report is not None
+                    and (not eval_report.passed or eval_report.overall_score < 0.85)
+                    and iteration < max_refinement_loops
+                ):
+                    if context.cancellation_token.is_cancelled:
+                        context.status = RunStage.CANCELLED
+                        context.duration_seconds = time.monotonic() - context.start_time
+                        await _sync_to_repo()
+                        return envelope.with_status(JobStatus.CANCELLED)
+
+                    iteration += 1
+                    self._record_refinement_telemetry(
+                        run_id, iteration, eval_report.overall_score, "started"
+                    )
+
+                    refinement_plan_wrapper = RefinementPlanner.create_refinement_plan(
+                        eval_report=eval_report,
+                        iteration=iteration,
+                        run_id=run_id,
+                        goal=context.goal,
+                    )
+
+                    if context.cancellation_token.is_cancelled:
+                        context.status = RunStage.CANCELLED
+                        context.duration_seconds = time.monotonic() - context.start_time
+                        await _sync_to_repo()
+                        return envelope.with_status(JobStatus.CANCELLED)
+
+                    context.status = RunStage.RESEARCHING
+                    await _sync_to_repo()
+
+                    refine_result: ExecutionResult = await executor.execute_plan(
+                        plan=refinement_plan_wrapper.research_plan,
+                        cancellation_token=context.cancellation_token,
+                    )
+
+                    context.completed_task_ids.extend(refine_result.completed_task_ids)
+                    context.failed_task_ids.extend(refine_result.failed_task_ids)
+                    context.total_token_usage = (
+                        context.total_token_usage + refine_result.total_token_usage
+                    )
+                    context.duration_seconds = time.monotonic() - context.start_time
+
+                    if refine_result.status == RunStage.CANCELLED:
+                        context.status = RunStage.CANCELLED
+                        await _sync_to_repo()
+                        return envelope.with_status(JobStatus.CANCELLED)
+
+                    if refine_result.status != RunStage.COMPLETED:
+                        # Refinement execution failed
                         break
+
+                    all_task_outputs.update(refine_result.task_outputs)
+
+                    new_eval_report = self._extract_eval_report(
+                        refine_result.task_outputs
+                    )
+                    if new_eval_report is not None:
+                        self._record_refinement_telemetry(
+                            run_id,
+                            iteration,
+                            new_eval_report.overall_score,
+                            "completed",
+                        )
+                        eval_report = new_eval_report
+                    else:
+                        break
+
+                # If refinement ran, re-invoke ReporterWorker to compile final updated dossier
+                if iteration > 0:
+                    rep_req = AgentRequest(
+                        request_id=f"req_rep_final_{run_id}_iter{iteration}",
+                        run_id=run_id,
+                        subtask_id="task_rep_final",
+                        agent_role=AgentRole.REPORTER,
+                        task_type=TaskType.REPORTING,
+                        goal_context=goal_query,
+                        input_data={
+                            "goal_query": goal_query,
+                            "findings": self._extract_all_findings(all_task_outputs),
+                            "claims": self._extract_all_claims(all_task_outputs),
+                            "citations": self._extract_all_citations(all_task_outputs),
+                            "contradictions": self._extract_all_contradictions(
+                                all_task_outputs
+                            ),
+                            "evaluation": (
+                                eval_report.model_dump() if eval_report else None
+                            ),
+                        },
+                        idempotency_key=f"idem_rep_final_{run_id}_iter{iteration}",
+                    )
+                    rep_env = await self._router.execute(rep_req)
+                    if (
+                        rep_env.status == TaskStatus.COMPLETED
+                        and rep_env.response
+                        and rep_env.response.output_data
+                    ):
+                        context.dossier = ResearchDossier.model_validate(
+                            rep_env.response.output_data
+                        )
+                else:
+                    # Extract initial ResearchDossier
+                    for task_id in reversed(result.completed_task_ids):
+                        output = result.task_outputs.get(task_id, {})
+                        if (
+                            isinstance(output, dict)
+                            and "dossier_id" in output
+                            and "markdown_report" in output
+                        ):
+                            context.dossier = ResearchDossier.model_validate(output)
+                            break
 
                 # Persist durable artifacts if storage provider is available
                 if context.dossier is not None and self._artifact_storage is not None:
@@ -318,7 +435,6 @@ class ResearchJobWorker(JobHandlerProtocol):
                         )
                         context.artifacts.append(dossier_meta)
                     except Exception as upload_err:
-                        # Log error without failing run status
                         import logging
 
                         logging.getLogger("researchmind.worker").warning(
@@ -327,6 +443,7 @@ class ResearchJobWorker(JobHandlerProtocol):
                             upload_err,
                         )
 
+                context.status = RunStage.COMPLETED
                 await _sync_to_repo()
                 return envelope.with_status(JobStatus.COMPLETED)
 
@@ -345,6 +462,101 @@ class ResearchJobWorker(JobHandlerProtocol):
             await _sync_to_repo()
             return envelope.with_status(
                 JobStatus.FAILED, error=str(e), is_retryable=True
+            )
+
+    def _extract_eval_report(
+        self, task_outputs: dict[str, Any]
+    ) -> EvaluationReport | None:
+        """Extract latest EvaluationReport from task execution outputs."""
+        for output in reversed(list(task_outputs.values())):
+            if (
+                isinstance(output, dict)
+                and "overall_score" in output
+                and "passed" in output
+                and "completeness_score" in output
+            ):
+                try:
+                    return EvaluationReport.model_validate(output)
+                except Exception:
+                    continue
+            elif isinstance(output, EvaluationReport):
+                return output
+        return None
+
+    def _extract_all_findings(
+        self, task_outputs: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Collect synthesized KeyFinding items from outputs."""
+        findings = []
+        for output in task_outputs.values():
+            if isinstance(output, dict) and "findings" in output:
+                raw = output["findings"]
+                if isinstance(raw, list):
+                    for item in raw:
+                        findings.append(
+                            item.model_dump() if hasattr(item, "model_dump") else item
+                        )
+        return findings
+
+    def _extract_all_claims(self, task_outputs: dict[str, Any]) -> list[dict[str, Any]]:
+        """Collect synthesized ExtractedClaim items from outputs."""
+        claims = []
+        for output in task_outputs.values():
+            if isinstance(output, dict) and "claims" in output:
+                raw = output["claims"]
+                if isinstance(raw, list):
+                    for item in raw:
+                        claims.append(
+                            item.model_dump() if hasattr(item, "model_dump") else item
+                        )
+        return claims
+
+    def _extract_all_citations(
+        self, task_outputs: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Collect CitationReference items from outputs."""
+        citations = []
+        for output in task_outputs.values():
+            if isinstance(output, dict) and "citations" in output:
+                raw = output["citations"]
+                if isinstance(raw, list):
+                    for item in raw:
+                        citations.append(
+                            item.model_dump() if hasattr(item, "model_dump") else item
+                        )
+        return citations
+
+    def _extract_all_contradictions(
+        self, task_outputs: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Collect ContradictionItem items from outputs."""
+        contradictions = []
+        for output in task_outputs.values():
+            if isinstance(output, dict) and "contradictions" in output:
+                raw = output["contradictions"]
+                if isinstance(raw, list):
+                    for item in raw:
+                        contradictions.append(
+                            item.model_dump() if hasattr(item, "model_dump") else item
+                        )
+        return contradictions
+
+    def _record_refinement_telemetry(
+        self, run_id: str, iteration: int, score: float, event: str
+    ) -> None:
+        """Record telemetry metrics for refinement cycles without failing on error."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            metrics = get_metrics()
+            metrics.increment_counter(
+                f"refinement.{event}",
+                attributes={"run_id": run_id, "iteration": iteration},
+            )
+            metrics.record_histogram(
+                "refinement.score",
+                score,
+                attributes={"run_id": run_id, "iteration": iteration},
             )
 
     def _ensure_complete_research_mesh(
