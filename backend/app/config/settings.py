@@ -558,6 +558,35 @@ class AppSettings(BaseSettings):
         description="Expiration duration in seconds for GCS signed download URLs (default 1 hour).",
     )
 
+    # Phase 6.7 — Distributed OpenTelemetry Tracing & Observability
+    otel_enabled: bool = Field(
+        default=False,
+        alias="OTEL_ENABLED",
+        description="Enable OpenTelemetry distributed tracing and metrics export.",
+    )
+    otel_service_name: str = Field(
+        default="researchmind",
+        alias="OTEL_SERVICE_NAME",
+        description="OpenTelemetry logical service name for resource identification.",
+    )
+    otel_exporter_otlp_endpoint: str = Field(
+        default="http://localhost:4317",
+        alias="OTEL_EXPORTER_OTLP_ENDPOINT",
+        description="OTLP collector gRPC/HTTP endpoint URL.",
+    )
+    otel_sampling_ratio: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        alias="OTEL_SAMPLING_RATIO",
+        description="Trace sampling ratio between 0.0 (none) and 1.0 (all).",
+    )
+    log_pii_scrubbing_enabled: bool = Field(
+        default=True,
+        alias="LOG_PII_SCRUBBING_ENABLED",
+        description="Enable automated regex sanitization of credentials and PII in logs.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:

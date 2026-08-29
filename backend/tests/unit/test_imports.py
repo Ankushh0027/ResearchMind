@@ -22,6 +22,7 @@ MODULES_TO_TEST = [
     "app.evaluation",
     "app.security",
     "app.storage",
+    "app.observability",
     "app.api",
     "app.config",
     "app.common",

@@ -16,6 +16,8 @@ from app.jobs.protocols import (
     JobStatus,
     RunContextResolver,
 )
+from app.observability.factory import get_metrics, get_tracer
+from app.observability.metrics import ObservabilityBridgeHook
 from app.orchestration.cancellation import CancellationToken
 from app.orchestration.contracts import AgentRequest, WorkerResponseEnvelope
 from app.orchestration.executor import DAGExecutor, ExecutionResult
@@ -246,11 +248,17 @@ class ResearchJobWorker(JobHandlerProtocol):
             context.status = RunStage.RESEARCHING
             await _sync_to_repo()
 
+            tracer = get_tracer()
+            metrics = get_metrics()
+
             executor = DAGExecutor(
                 max_concurrency=self._max_concurrency,
                 worker_registry=self._router,
                 checkpoint_repo=context.checkpoint_repo,
                 event_sink=context.event_sink,
+                observability_hook=ObservabilityBridgeHook(
+                    tracer=tracer, metrics=metrics
+                ),
             )
 
             result: ExecutionResult = await executor.execute_plan(

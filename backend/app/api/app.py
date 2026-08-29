@@ -16,6 +16,7 @@ from app.api.routes import set_global_service
 from app.api.schemas import ErrorResponse
 from app.api.service import ResearchService
 from app.config.settings import get_settings
+from app.observability.middleware import TraceContextMiddleware
 from app.security.headers import SecurityHeadersMiddleware
 from app.security.request_size import RequestSizeLimitMiddleware
 
@@ -95,8 +96,17 @@ def create_app(service: ResearchService | None = None) -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-API-Key",
+            "traceparent",
+            "tracestate",
+        ],
     )
+
+    # 4. Distributed Trace Context & Correlation — outermost tracing boundary
+    app.add_middleware(TraceContextMiddleware)
 
     # ------------------------------------------------------------------
     # Structured exception handlers — no stack traces, no secret leaks

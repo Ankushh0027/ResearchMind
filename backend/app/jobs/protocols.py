@@ -62,6 +62,14 @@ class JobEnvelope(BaseModel):
     is_retryable: bool = Field(
         default=True, description="Whether the last failure is retryable"
     )
+    traceparent: str | None = Field(
+        default=None,
+        description="W3C traceparent header string for distributed tracing",
+    )
+    tracestate: str | None = Field(
+        default=None,
+        description="Optional W3C tracestate header string",
+    )
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Custom contextual metadata"
     )
@@ -75,6 +83,8 @@ class JobEnvelope(BaseModel):
         started_at: datetime | None = None,
         completed_at: datetime | None = None,
         attempt: int | None = None,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> "JobEnvelope":
         """Produce an updated copy of this envelope with modified lifecycle state."""
         updates: dict[str, Any] = {"status": status}
@@ -88,6 +98,10 @@ class JobEnvelope(BaseModel):
             updates["completed_at"] = completed_at
         if attempt is not None:
             updates["attempt"] = attempt
+        if traceparent is not None:
+            updates["traceparent"] = traceparent
+        if tracestate is not None:
+            updates["tracestate"] = tracestate
 
         dump = self.model_dump()
         dump.update(updates)

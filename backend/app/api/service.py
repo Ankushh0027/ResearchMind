@@ -25,6 +25,7 @@ from app.jobs.protocols import (
     JobPublisherProtocol,
 )
 from app.jobs.worker import ResearchJobWorker
+from app.observability.context import get_current_context
 from app.orchestration.cancellation import CancellationToken
 from app.orchestration.events import ExecutionEvent
 from app.orchestration.protocols import (
@@ -165,7 +166,13 @@ class ResearchService:
         async with self._lock:
             self._runs[run_id] = context
 
-        # 3. Publish JobEnvelope
+        # 3. Publish JobEnvelope with distributed trace correlation
+        current_ctx = get_current_context()
+        traceparent = current_ctx.to_traceparent() if current_ctx else None
+        tracestate = (
+            current_ctx.trace_state if current_ctx and current_ctx.trace_state else None
+        )
+
         job_envelope = JobEnvelope(
             job_id=f"job_{uuid.uuid4().hex[:12]}",
             run_id=run_id,
@@ -173,6 +180,8 @@ class ResearchService:
             domain_tags=goal.domain_tags,
             constraints=goal.constraints,
             max_subtasks=goal.max_subtasks,
+            traceparent=traceparent,
+            tracestate=tracestate,
         )
 
         await self._publisher.publish(job_envelope)
