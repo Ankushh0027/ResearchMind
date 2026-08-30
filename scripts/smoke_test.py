@@ -24,7 +24,7 @@ def run_smoke_tests(
 ) -> bool:
     """Execute end-to-end smoke verification against live target or in-memory mock."""
     print("=" * 60)
-    print("ResearchMind Deployment Smoke Test Suite (Phase 7.4)")
+    print("ResearchMind Deployment Smoke Test Suite (Phase 7.5 Release)")
     print("=" * 60)
 
     mock_app: Any = None
@@ -52,10 +52,10 @@ def run_smoke_tests(
     )
 
     passed_checks = 0
-    total_checks = 7
+    total_checks = 9
 
     # 1. Health Probe Check
-    print("\n[CHECK 1/7] Probing /healthz endpoint...")
+    print("\n[CHECK 1/9] Probing /healthz endpoint...")
     try:
         health_data = client.health()
         assert health_data.get("status") == "ok", (
@@ -67,7 +67,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Health check failed: {e}")
 
     # 2. Frontend Workspace Root Probe
-    print("\n[CHECK 2/7] Probing Web Workspace root (GET /)...")
+    print("\n[CHECK 2/9] Probing Web Workspace root (GET /)...")
     try:
         with client._create_http_client() as http:
             resp = http.get("/")
@@ -79,7 +79,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Web Workspace probe failed: {e}")
 
     # 3. Frontend Static Assets Probe
-    print("\n[CHECK 3/7] Probing Web Workspace static CSS & JS assets...")
+    print("\n[CHECK 3/9] Probing Web Workspace static CSS & JS assets...")
     try:
         with client._create_http_client() as http:
             css_resp = http.get("/css/styles.css")
@@ -92,7 +92,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Static asset probe failed: {e}")
 
     # 4. Research Inquiry Submission
-    print("\n[CHECK 4/7] Submitting test research inquiry...")
+    print("\n[CHECK 4/9] Submitting test research inquiry...")
     run_id = None
     try:
         sub_res = client.submit_run(
@@ -110,7 +110,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Submission failed: {e}")
 
     # 5. Status Retrieval Check
-    print(f"\n[CHECK 5/7] Fetching status for run '{run_id}'...")
+    print(f"\n[CHECK 5/9] Fetching status for run '{run_id}'...")
     if run_id:
         try:
             status_res = client.get_run(run_id)
@@ -123,7 +123,7 @@ def run_smoke_tests(
         print("  -> SKIP: Run submission failed earlier")
 
     # 6. SSE Stream Check
-    print(f"\n[CHECK 6/7] Probing Server-Sent Events stream for run '{run_id}'...")
+    print(f"\n[CHECK 6/9] Probing Server-Sent Events stream for run '{run_id}'...")
     if run_id:
         try:
             events_received = 0
@@ -141,7 +141,7 @@ def run_smoke_tests(
         print("  -> SKIP: Run submission failed earlier")
 
     # 7. Artifact Listing Check
-    print(f"\n[CHECK 7/7] Listing durable artifacts for run '{run_id}'...")
+    print(f"\n[CHECK 7/9] Listing durable artifacts for run '{run_id}'...")
     if run_id:
         try:
             artifacts = client.list_artifacts(run_id)
@@ -150,6 +150,44 @@ def run_smoke_tests(
             passed_checks += 1
         except Exception as e:
             print(f"  -> FAIL: Artifact list check failed: {e}")
+    else:
+        print("  -> SKIP: Run submission failed earlier")
+
+    # 8. Payload Validation Error Guard
+    print(
+        "\n[CHECK 8/9] Probing request validation guard (HTTP 422 on invalid payload)..."
+    )
+    try:
+        with client._create_http_client() as http:
+            inv_resp = http.post(
+                f"{client.base_url}/api/v1/runs",
+                json={"query": "x"},  # too short (<3 chars)
+            )
+            assert inv_resp.status_code == 422, (
+                f"Expected 422, got {inv_resp.status_code}"
+            )
+            assert "VALIDATION_ERROR" in inv_resp.text
+        print(
+            "  -> PASS: Request validation guard rejected invalid payload with HTTP 422"
+        )
+        passed_checks += 1
+    except Exception as e:
+        print(f"  -> FAIL: Validation guard check failed: {e}")
+
+    # 9. Cooperative Run Cancellation
+    print(
+        f"\n[CHECK 9/9] Probing cooperative cancellation endpoint for run '{run_id}'..."
+    )
+    if run_id:
+        try:
+            cancel_res = client.cancel_run(run_id)
+            assert cancel_res.get("run_id") == run_id
+            print(
+                f"  -> PASS: Cancellation request acknowledged (status: {cancel_res.get('status')})"
+            )
+            passed_checks += 1
+        except Exception as e:
+            print(f"  -> FAIL: Cancellation probe failed: {e}")
     else:
         print("  -> SKIP: Run submission failed earlier")
 

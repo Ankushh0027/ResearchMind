@@ -1,59 +1,97 @@
 # ResearchMind
 
-> **Autonomous Asynchronous Multi-Agent Research System**
+> **Autonomous Asynchronous Multi-Agent Research System & Evidence Dossier Platform**
 
 [![CI](https://github.com/Ankushh0027/ResearchMind/actions/workflows/ci.yml/badge.svg)](https://github.com/Ankushh0027/ResearchMind/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type_checked-mypy-blue.svg)](https://mypy-lang.org/)
+[![Benchmark Score](https://img.shields.io/badge/Golden%20Benchmark-0.9781%20%2F%201.0-emerald.svg)](#8-golden-benchmark-evaluation)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## 1. What ResearchMind Is
 
-**ResearchMind** is an autonomous, asynchronous research intelligence platform powered by specialized multi-agent collaboration, deep retrieval-augmented generation (RAG), dynamic self-correction loops, and automated rubric evaluation. It transforms complex, open-ended research inquiries into comprehensive, citation-backed, conflict-checked investigative dossiers.
+**ResearchMind** is an enterprise-grade autonomous research platform powered by specialized multi-agent collaboration, deep retrieval-augmented generation (RAG), dynamic self-correction loops, and automated rubric evaluation. It transforms complex, open-ended research questions into comprehensive, citation-backed, conflict-checked investigative dossiers.
 
-Rather than relying on a single, monolithic LLM prompt that suffers from hallucinations and shallow synthesis, ResearchMind decomposes research goals into structured inquiry DAGs. It deploys parallel research agents to gather evidence, cross-examine contradicting claims, verify primary sources, and dynamically refine incomplete findings before generating publication-grade research reports.
+### The Problem It Solves
+Standard single-turn LLM prompts suffer from **hallucinations, shallow synthesis, missing citations, and inability to handle contradicting sources**. When tasked with deep literature analysis or strategic research, single-turn LLMs smooth over nuanced scientific disagreements and cite non-existent papers.
+
+### Why ResearchMind Is Different
+1. **Dynamic Multi-Agent DAGs**: Breaks research goals into dependency-aware parallel subtasks across 6 specialized agent personas (`Planner`, `Researcher`, `Analyst`, `Verifier`, `Evaluator`, `Reporter`).
+2. **Atomic Factual Claim Extraction & Grounding**: Claims are extracted as atomic propositions strictly linked to empirical evidence records.
+3. **Contradiction Detection**: Explicitly identifies and documents factual disagreements between competing publications with divergence severity scores.
+4. **Autonomous Self-Correction Loop**: The Evaluator agent scores completeness, citation coverage, and contradiction rates, dynamically kicking off inquiry refinement loops if acceptance thresholds are not met.
+5. **Durable Enterprise Architecture**: Powered by Google Cloud Pub/Sub, Firestore checkpoints, worker lease supervisors with auto-recovery, OpenTelemetry distributed tracing, and constant-time SHA-256 API key authentication.
 
 ---
 
-## 2. High-Level Architecture
+## 2. System Architecture
 
 ```mermaid
 flowchart TD
-    User([User / CLI / Client]) -->|Submit Research Request| API[FastAPI Gateway]
-    API -->|Persist Initial State| Firestore[(Google Cloud Firestore)]
-    API -->|Publish Task Job| PubSub[Google Cloud Pub/Sub]
-    
-    PubSub -->|Ingest Job| Orchestrator[Orchestration Engine / Worker]
-    
-    subgraph AgentMesh [Autonomous Multi-Agent Subsystem]
-        Orchestrator --> Planner[Planner Agent]
-        Planner -->|Decomposed Subtasks| PubSub
-        
-        Researcher[Researcher Agents] -->|Query & Scrape| Tools[Web / Document / Science Tools]
-        Researcher -->|Store Chunks & Embeddings| Qdrant[(Qdrant Vector DB)]
-        
-        Qdrant -->|Context Retrieval| Analyst[Analyst Agent]
-        Analyst -->|Synthesized Claims| Verifier[Verifier Agent]
-        
-        Verifier -->|Conflict Detection| Evaluator[Evaluator Agent]
-        Evaluator -->|Self-Correction Feedback| Refiner[Refinement Planner]
-        Refiner -.->|Iterative Refinement Loop| Researcher
-        Evaluator -->|Approved Findings| Reporter[Reporter Agent]
+    subgraph ClientTier [Client Tier]
+        UI[Research Workspace Web UI\n(Vanilla HTML/CSS/ES Modules)]
+        CLI[Operator CLI\n(researchmind)]
     end
-    
-    Reporter -->|Compile Markdown / PDF Dossier| GCS[(Google Cloud Storage)]
-    Reporter -->|Final Status Update| Firestore
-    User -.->|Poll Progress / Stream SSE| API
+
+    subgraph GatewayTier [Security Gateway]
+        Gateway[FastAPI Gateway]
+        Auth[SHA-256 Digest Auth & Tenant Isolation]
+        RateLimit[Sliding-Window Rate Limiter]
+        Headers[Security Headers & Anti-Caching]
+    end
+
+    subgraph TransportTier [Distributed Messaging & Recovery]
+        PubSub[Google Cloud Pub/Sub]
+        Supervisor[Worker Lease Supervisor & Heartbeat Reaper]
+    end
+
+    subgraph AgentMesh [Specialized Multi-Agent Mesh]
+        Planner[1. Planner Agent] -->|DAG Tasks| PubSub
+        Researcher[2. Researcher Agent] -->|Web & Academic Search| External[Tavily + arXiv + Gemini]
+        Researcher -->|Chunks & Embeddings| Qdrant[(Qdrant Vector DB)]
+        Qdrant -->|Context| Analyst[3. Analyst Agent]
+        Analyst -->|Synthesized Claims| Verifier[4. Verifier Agent]
+        Verifier -->|Conflict Detection| Evaluator[5. Evaluator Agent]
+        Evaluator -.->|Refinement Loop Feedback| Researcher
+        Evaluator -->|Approved Output| Reporter[6. Reporter Agent]
+    end
+
+    subgraph PersistenceTier [Persistence & Artifacts]
+        Firestore[(Cloud Firestore Checkpoints)]
+        GCS[(Cloud Storage GCS Deliverables)]
+    end
+
+    ClientTier --> GatewayTier --> TransportTier --> AgentMesh
+    AgentMesh <--> PersistenceTier
 ```
 
 ---
 
-## 3. Operator CLI (`researchmind`)
+## 3. Interactive Web Workspace (`frontend/`)
 
-ResearchMind includes a production-ready command line interface for operators, developers, and CI pipelines:
+ResearchMind includes a responsive dark-mode Web Workspace:
+
+```bash
+# Start backend API and static web workspace
+uvicorn app.api.app:create_app --factory --host 0.0.0.0 --port 8080 --reload
+
+# Open in browser:
+# http://localhost:8080/
+```
+
+### Key Workspace Capabilities
+- **Inquiry Launchpad**: Research inquiry submission with domain chips, subtask limits, and suggestion prompts.
+- **Live Multi-Agent Pipeline**: Real-time SSE execution visualization tracking `Planner` → `Researcher` → `Analyst` → `Verifier` → `Evaluator` → `Reporter`.
+- **Live Event Timeline & Diagnostics**: Streaming event logs, token consumption counters (input vs output), subtask progress, and elapsed timers.
+- **Research Dossier Studio**: Tabbed viewer for Executive Summaries, Key Findings, Grounded Claims, Contradiction Flags, and Evaluation Rubric metrics.
+- **Artifact Explorer**: Verified persistent downloads (`.md` reports, `.json` dossiers) with SHA-256 checksum badges.
+
+---
+
+## 4. Operator CLI (`researchmind`)
 
 ```bash
 # 1. Health Probe
@@ -70,7 +108,7 @@ researchmind stream <run_id>
 # 4. Inspect Real-Time Status & Key Findings
 researchmind status <run_id> --full
 
-# 5. Export Deliverables and Artifacts to Disk
+# 5. Export Deliverables to Disk
 researchmind export <run_id> --output-dir ./artifacts
 
 # 6. Execute Golden Evaluation Benchmark Suite
@@ -79,81 +117,74 @@ researchmind benchmark --threshold 0.85
 
 ---
 
-## 4. Local Execution & Docker Staging
+## 5. Quickstart & Local Setup
 
-### Local Virtual Environment
+### Installation
 ```bash
-# Install package with all developer tools and CLI entrypoint
+# Clone repository
+git clone https://github.com/Ankushh0027/ResearchMind.git
+cd ResearchMind
+
+# Install package with all developer tools and CLI
 pip install -e ".[dev]"
+```
 
-# Run full test suite (811 unit, integration, and benchmark tests)
-pytest
+### Environment Configuration
+```bash
+# Copy template configuration
+cp .env.example .env
 
-# Run linters and type checkers
+# Edit .env to supply your Gemini API key (or run in deterministic mock mode)
+export GEMINI_API_KEY="your_api_key_here"
+```
+
+---
+
+## 6. Deterministic Demo & Smoke Testing
+
+ResearchMind is designed to run in deterministic offline mock mode for instant evaluation:
+
+```bash
+# Run 9-point deployment smoke test suite
+python scripts/smoke_test.py --mock
+
+# Run automated golden evaluation benchmark suite (4/4 passed, 0.9781 composite score)
+python -m app.cli.main benchmark
+```
+
+---
+
+## 7. Full Quality Gate Verification
+
+```bash
+# 1. Run all 849 unit & integration tests
+python -m pytest
+
+# 2. Run Ruff linter and formatters
 ruff check .
 ruff format --check .
-python -m mypy --config-file pyproject.toml
-```
 
-### Docker Compose Multi-Service Stack
-```bash
-# Spin up API Gateway and Background Worker
-docker compose up --build
+# 3. Run strict Mypy type-checking
+mypy --python-version 3.12 backend/app backend/tests
 ```
 
 ---
 
-## 5. Google Cloud Deployment (Terraform)
+## 8. Golden Benchmark Evaluation
 
-ResearchMind provides turnkey Infrastructure as Code under `infrastructure/terraform/`:
+ResearchMind is benchmarked across 4 complex multidisciplinary evaluation scenarios:
 
-```bash
-cd infrastructure/terraform
-cp terraform.tfvars.example terraform.tfvars
-
-# Initialize and deploy
-terraform init
-terraform plan
-terraform apply
-```
-
-### Automated Deployment Scripts
-```bash
-# Deploy to Google Cloud Platform (Linux/macOS)
-./scripts/deploy.sh <GCP_PROJECT_ID> [GCP_REGION]
-
-# Deploy to Google Cloud Platform (PowerShell)
-.\scripts\deploy.ps1 -ProjectId <GCP_PROJECT_ID>
-
-# Post-Deployment Smoke Test
-python scripts/smoke_test.py --url https://<your-cloud-run-api-url> --api-key <your-key>
-```
+| Scenario | Domain | Quality Dimensions Evaluated | Score |
+| :--- | :--- | :--- | :--- |
+| **scenario_academic_quantum_01** | Quantum Computing | Grounding, Citation Precision, Coherence | **1.0000** |
+| **scenario_biomedical_mrna_02** | Biomedical / mRNA | Contradiction Rate, Source Trust, Evidence Link | **1.0000** |
+| **scenario_financial_cbdc_03** | Economics & Fintech | Completeness, Cross-Examination, Rubric | **1.0000** |
+| **scenario_technical_rag_04** | AI & RAG Architecture | Synthesis Rigor, Unsupported Assertion Penalty | **0.9125** |
+| **Composite Average** | **All Scenarios** | **Pass Threshold: 0.8500** | **0.9781 (PASS)** |
 
 ---
 
----
-
-## 6. Interactive Web Workspace (`frontend/`)
-
-ResearchMind Phase 7.3 provides an interactive, modern web workspace:
-
-```bash
-# Start backend API and static web workspace
-uvicorn app.api.app:create_app --factory --host 0.0.0.0 --port 8080 --reload
-
-# Open in browser:
-# http://localhost:8080/
-```
-
-### Features
-- **Inquiry Launchpad**: Query submission with domain tags, task bounds, and constraint sliders.
-- **Live Multi-Agent Pipeline**: Real-time SSE execution monitor (`Planner` → `Researcher` → `Analyst` → `Verifier` → `Evaluator` → `Reporter`).
-- **Research Dossier Studio**: Interactive Executive Summary, Key Findings, Verified Claims, Contradiction Alerts, and Evaluation Rubric metrics.
-- **Artifact Explorer**: Persistent artifact viewer and SHA-256 verified direct downloads.
-
----
-
-## 7. Implemented Phases & Verification Baseline
+## 9. Verification Baseline Across Phases
 
 - [x] **Phase 6.1**: Durable State & Checkpoint Persistence (Google Cloud Firestore)
 - [x] **Phase 6.2**: Distributed Messaging & Task Distribution (Google Cloud Pub/Sub)
@@ -168,3 +199,5 @@ uvicorn app.api.app:create_app --factory --host 0.0.0.0 --port 8080 --reload
 - [x] **Phase 7.1**: Worker Leases, Heartbeat Supervision & Automatic Crash Recovery
 - [x] **Phase 7.2**: Production API Security, SHA-256 Digest Auth & Tenant Isolation
 - [x] **Phase 7.3**: Interactive Research Workspace & Live Multi-Agent Execution Studio
+- [x] **Phase 7.4**: Production Browser Validation, Deployment Hardening & Product Polish
+- [x] **Phase 7.5**: Hackathon Submission & Production Release Hardening

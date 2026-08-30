@@ -6,10 +6,10 @@ export function renderInquiryForm(container, store, onSubmit) {
   let selectedTags = new Set(['physics', 'materials science']);
 
   const SUGGESTIONS = [
-    'Room-temperature superconductivity in hydride compounds',
-    'Quantum topological insulators and Majorana zero modes',
-    'CRISPR-Cas9 off-target mitigation strategies in clinical gene therapy',
-    'Transformer architecture efficiency optimizations for edge devices',
+    'Analyze the current state of retrieval-augmented generation for scientific research, identify the major reliability challenges, compare approaches, and provide evidence-backed conclusions.',
+    'Room-temperature superconductivity in hydride compounds under high pressure',
+    'Quantum topological insulators and Majorana zero modes in solid-state devices',
+    'CRISPR-Cas9 off-target mitigation strategies in clinical human therapeutics',
   ];
 
   const update = (state) => {
