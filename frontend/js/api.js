@@ -1,8 +1,8 @@
 /**
- * ResearchMind - Type-Safe API Client & SSE Event Stream Manager
+ * ResearchMind - Type-Safe API Client & Resilient SSE Stream Manager (Phase 7.4 Hardened)
  *
  * Implements exact backend REST and SSE contracts with zero fabricated schemas.
- * Uses native fetch with ReadableStream for SSE to support Bearer token authentication headers.
+ * Includes bounded exponential backoff reconnection, stream deduplication, and error recovery.
  */
 
 export class ApiClient {
@@ -26,13 +26,14 @@ export class ApiClient {
   }
 
   /**
-   * Safe JSON error handler
+   * Safe JSON error handler with standardized ErrorResponse mapping
    */
   async _handleError(response) {
     let errorDetail = {
       status: response.status,
       error_code: `HTTP_${response.status}`,
       message: response.statusText || 'An unexpected error occurred',
+      details: null,
     };
 
     try {
@@ -46,11 +47,13 @@ export class ApiClient {
         };
       }
     } catch {
-      // Body not JSON
+      // Non-JSON response body
     }
 
     if (response.status === 401) {
       errorDetail.message = 'Authentication required. Please provide a valid API key in settings.';
+    } else if (response.status === 404) {
+      errorDetail.message = 'Requested resource was not found or is not accessible.';
     } else if (response.status === 413) {
       errorDetail.message = 'Request payload exceeds maximum allowed size (1 MiB).';
     } else if (response.status === 429) {
@@ -169,10 +172,22 @@ export class ApiClient {
   }
 
   /**
-   * Stream live Server-Sent Events with Bearer header support & resilient line parsing
+   * Stream live Server-Sent Events with Bearer header support, auto-reconnect, and bounded backoff.
+   *
+   * @param {string} runId
+   * @param {string} apiKey
+   * @param {Object} options
+   * @param {Function} options.onEvent
+   * @param {Function} [options.onError]
+   * @param {Function} [options.onComplete]
+   * @param {Function} [options.onReconnecting]
+   * @param {number} [options.maxRetries=5]
+   * @returns {Function} closer function
    */
-  subscribeEvents(runId, apiKey = '', { onEvent, onError, onComplete, signal }) {
-    let aborted = false;
+  subscribeEvents(runId, apiKey = '', { onEvent, onError, onComplete, onReconnecting, maxRetries = 5 }) {
+    let isClosed = false;
+    let retryAttempt = 0;
+    let abortController = new AbortController();
 
     const parseAndDispatch = (rawChunk) => {
       const blocks = rawChunk.split('\n\n');
@@ -203,14 +218,16 @@ export class ApiClient {
       }
     };
 
-    const startStream = async () => {
+    const connect = async () => {
+      if (isClosed) return;
+
       try {
         const response = await fetch(
           `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/events`,
           {
             method: 'GET',
             headers: this._buildHeaders(apiKey, { 'Accept': 'text/event-stream' }),
-            signal,
+            signal: abortController.signal,
           }
         );
 
@@ -219,20 +236,22 @@ export class ApiClient {
         }
 
         if (!response.body) {
-          throw new Error('ReadableStream not supported by browser response.');
+          throw new Error('ReadableStream not supported.');
         }
+
+        // Connection established successfully — reset retry counter
+        retryAttempt = 0;
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
 
-        while (!aborted) {
+        while (!isClosed) {
           const { done, value } = await reader.read();
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
-          // Process all complete chunks
           for (let i = 0; i < parts.length - 1; i++) {
             parseAndDispatch(parts[i]);
           }
@@ -243,17 +262,39 @@ export class ApiClient {
           parseAndDispatch(buffer);
         }
 
-        if (onComplete) onComplete();
+        if (!isClosed && onComplete) {
+          onComplete();
+        }
       } catch (err) {
-        if (signal && signal.aborted) return;
-        if (onError) onError(err);
+        if (isClosed || (abortController && abortController.signal.aborted)) {
+          return;
+        }
+
+        if (retryAttempt < maxRetries) {
+          retryAttempt++;
+          const delayMs = Math.min(1000 * Math.pow(2, retryAttempt - 1), 16000);
+          if (onReconnecting) {
+            onReconnecting(retryAttempt, delayMs);
+          }
+          setTimeout(() => {
+            if (!isClosed) {
+              abortController = new AbortController();
+              connect();
+            }
+          }, delayMs);
+        } else {
+          if (onError) {
+            onError(err);
+          }
+        }
       }
     };
 
-    startStream();
+    connect();
 
     return () => {
-      aborted = true;
+      isClosed = true;
+      abortController.abort();
     };
   }
 }

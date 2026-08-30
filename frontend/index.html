@@ -11,34 +11,34 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <div class="app-container">
+  <main class="app-container" role="main">
     <!-- Header & Health Indicator -->
-    <header id="header-container" class="header-bar"></header>
+    <header id="header-container" class="header-bar" role="banner"></header>
 
     <!-- Inquiry Submission Studio -->
-    <section id="inquiry-container"></section>
+    <section id="inquiry-container" role="region" aria-label="Research Inquiry Studio"></section>
 
     <!-- Live Execution & Telemetry -->
-    <section id="dag-container"></section>
+    <section id="dag-container" role="region" aria-label="Multi-Agent Pipeline"></section>
 
     <div class="execution-split">
-      <section id="event-log-container"></section>
-      <section id="diagnostics-container"></section>
+      <section id="event-log-container" role="region" aria-label="Live Execution Timeline" aria-live="polite"></section>
+      <section id="diagnostics-container" role="region" aria-label="Run Diagnostics"></section>
     </div>
 
     <!-- Final Research Dossier -->
-    <section id="dossier-container"></section>
+    <section id="dossier-container" role="region" aria-label="Research Dossier"></section>
 
     <!-- Persistent Artifacts -->
-    <section id="artifacts-container"></section>
-  </div>
+    <section id="artifacts-container" role="region" aria-label="Persistent Artifacts"></section>
+  </main>
 
   <!-- API Key & Credentials Modal -->
-  <div id="settings-modal" class="modal-backdrop">
+  <div id="settings-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-box">
       <div class="card-title">
-        <span>🔑 API Credentials & Tenant Settings</span>
-        <button id="btn-close-modal" class="btn btn-secondary btn-sm">✕</button>
+        <span id="modal-title">🔑 API Credentials & Tenant Settings</span>
+        <button id="btn-close-modal" class="btn btn-secondary btn-sm" aria-label="Close Settings">✕</button>
       </div>
 
       <div style="margin-bottom: 1.25rem; color: var(--text-secondary); font-size: 0.85rem;">

@@ -1,9 +1,9 @@
 /**
- * ResearchMind - Main Application Orchestrator
+ * ResearchMind - Main Application Orchestrator (Phase 7.4 Hardened)
  */
 
 import { ApiClient } from './api.js';
-import { AppStore } from './state.js';
+import { AppStore, TERMINAL_STAGES } from './state.js';
 import { renderHeader } from './components/header.js';
 import { renderInquiryForm } from './components/inquiry_form.js';
 import { renderAgentDag } from './components/agent_dag.js';
@@ -59,14 +59,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // 3. Settings Modal Management
   function openSettingsModal() {
     const { apiKey, rememberApiKey } = store.getState();
-    modalKeyInput.value = apiKey || '';
-    modalRememberCb.checked = rememberApiKey;
-    modalEl.classList.add('open');
-    modalKeyInput.focus();
+    if (modalKeyInput) modalKeyInput.value = apiKey || '';
+    if (modalRememberCb) modalRememberCb.checked = rememberApiKey;
+    modalEl?.classList.add('open');
+    modalKeyInput?.focus();
   }
 
   function closeSettingsModal() {
-    modalEl.classList.remove('open');
+    modalEl?.classList.remove('open');
   }
 
   btnCloseModal?.addEventListener('click', closeSettingsModal);
@@ -75,18 +75,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnSaveKey?.addEventListener('click', () => {
-    store.setApiKey(modalKeyInput.value, modalRememberCb.checked);
+    store.setApiKey(modalKeyInput?.value, modalRememberCb?.checked);
     closeSettingsModal();
   });
 
   btnClearKey?.addEventListener('click', () => {
-    modalKeyInput.value = '';
+    if (modalKeyInput) modalKeyInput.value = '';
     store.setApiKey('', false);
     closeSettingsModal();
   });
 
-  // 4. Research Run Submission Workflow
-  async function handleRunSubmission(payload) {
+  // Helper to cleanup active subscriptions
+  function cleanupActiveStreams() {
     if (eventSubscriptionCloser) {
       eventSubscriptionCloser();
       eventSubscriptionCloser = null;
@@ -95,7 +95,11 @@ document.addEventListener('DOMContentLoaded', () => {
       clearInterval(statusPollInterval);
       statusPollInterval = null;
     }
+  }
 
+  // 4. Research Run Submission Workflow
+  async function handleRunSubmission(payload) {
+    cleanupActiveStreams();
     store.resetRun();
     store.setState({ isSubmitting: true, goalQuery: payload.query, error: null });
 
@@ -112,20 +116,24 @@ document.addEventListener('DOMContentLoaded', () => {
         isStreaming: true,
       });
 
-      // Start SSE Event Subscription
+      // Start SSE Event Subscription with auto-reconnection
       eventSubscriptionCloser = api.subscribeEvents(runId, apiKey, {
         onEvent: (event) => {
           store.handleSseEvent(event);
         },
+        onReconnecting: (attempt, delayMs) => {
+          store.setState({ isReconnecting: true, reconnectAttempt: attempt });
+        },
         onError: (err) => {
-          console.warn('SSE Stream encountered non-fatal interruption:', err);
+          console.warn('SSE Stream interrupted, relying on REST status polling:', err);
+          store.setState({ isStreaming: false, isReconnecting: false });
         },
         onComplete: () => {
-          store.setState({ isStreaming: false });
+          store.setState({ isStreaming: false, isReconnecting: false });
         },
       });
 
-      // Start periodic status sync for Dossier and Artifacts
+      // Start periodic status sync for Dossier, Artifacts, and token telemetry
       const syncRunState = async () => {
         try {
           const detail = await api.getRun(runId, apiKey);
@@ -149,19 +157,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             store.setState(updates);
 
-            if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(detail.status)) {
-              if (statusPollInterval) {
-                clearInterval(statusPollInterval);
-                statusPollInterval = null;
-              }
+            if (TERMINAL_STAGES.includes(detail.status)) {
+              cleanupActiveStreams();
             }
           }
         } catch (err) {
-          console.warn('Status sync error:', err);
+          console.warn('Status sync poll error:', err);
         }
       };
 
-      // Poll every 1.5s while active
+      // Initial sync and interval polling
       syncRunState();
       statusPollInterval = setInterval(syncRunState, 1500);
 
@@ -181,6 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await api.cancelRun(currentRunId, apiKey);
       store.setState({ runStage: 'CANCELLED' });
+      cleanupActiveStreams();
     } catch (err) {
       alert(`Cancellation failed: ${err.message}`);
     }
@@ -206,5 +212,23 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       alert(`Failed to download artifact: ${err.message}`);
     }
+  }
+
+  // 7. Check URL parameters for direct run inspection (?run_id=...)
+  const params = new URLSearchParams(window.location.search);
+  const initialRunId = params.get('run_id');
+  if (initialRunId) {
+    store.setState({ currentRunId: initialRunId, runStage: 'QUEUED' });
+    const { apiKey } = store.getState();
+    api.getRun(initialRunId, apiKey).then(detail => {
+      if (detail) {
+        store.setState({
+          runStage: detail.status,
+          goalQuery: detail.goal_query,
+          dossier: detail.dossier || null,
+          artifacts: detail.artifacts || [],
+        });
+      }
+    }).catch(() => {});
   }
 });

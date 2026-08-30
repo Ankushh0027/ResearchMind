@@ -1,10 +1,17 @@
 /**
- * ResearchMind - Reactive Deterministic State Store
+ * ResearchMind - Reactive Deterministic State Store (Phase 7.4 Hardened)
+ *
+ * Implements strict state machine transitions, event deduplication, and bounded memory buffers.
  */
+
+export const TERMINAL_STAGES = Object.freeze(['COMPLETED', 'FAILED', 'CANCELLED']);
 
 export class AppStore {
   constructor() {
     this._listeners = new Set();
+    this._seenEventIds = new Set();
+    this._maxEvents = 200;
+
     this._state = {
       health: { status: 'checking', version: '0.1.0' },
       apiKey: sessionStorage.getItem('rm_api_key') || '',
@@ -14,9 +21,11 @@ export class AppStore {
       // Active run execution state
       currentRunId: null,
       goalQuery: '',
-      runStage: 'IDLE', // IDLE, QUEUED, PLANNING, RESEARCHING, ANALYZING, VERIFYING, EVALUATING, REPORTING, COMPLETED, FAILED, CANCELLED
+      runStage: 'IDLE', // IDLE, SUBMITTING, QUEUED, PLANNING, RESEARCHING, ANALYZING, VERIFYING, EVALUATING, REPORTING, COMPLETED, FAILED, CANCELLED, RECONNECTING
       isSubmitting: false,
       isStreaming: false,
+      isReconnecting: false,
+      reconnectAttempt: 0,
       error: null,
 
       // Live multi-agent DAG pipeline status
@@ -43,7 +52,7 @@ export class AppStore {
         contradictionsCount: 0,
       },
 
-      // Live event timeline logs
+      // Live event timeline logs (capped at _maxEvents)
       events: [],
 
       // Final compiled deliverable
@@ -64,6 +73,16 @@ export class AppStore {
   }
 
   setState(updates) {
+    // Guard: Do not overwrite terminal runStage with non-terminal stages
+    if (
+      updates.runStage &&
+      TERMINAL_STAGES.includes(this._state.runStage) &&
+      !TERMINAL_STAGES.includes(updates.runStage) &&
+      updates.runStage !== 'IDLE' // allow reset to IDLE
+    ) {
+      delete updates.runStage;
+    }
+
     this._state = { ...this._state, ...updates };
     for (const listener of this._listeners) {
       try {
@@ -92,12 +111,15 @@ export class AppStore {
   }
 
   resetRun() {
+    this._seenEventIds.clear();
     this.setState({
       currentRunId: null,
       goalQuery: '',
       runStage: 'IDLE',
       isSubmitting: false,
       isStreaming: false,
+      isReconnecting: false,
+      reconnectAttempt: 0,
       error: null,
       agentStages: {
         PLANNER: 'idle',
@@ -126,14 +148,34 @@ export class AppStore {
   }
 
   /**
-   * Process actual backend SSE lifecycle events
+   * Process actual backend SSE lifecycle events with deduplication and state machine guards
    */
   handleSseEvent(rawEvent) {
     const { event, data } = rawEvent;
-    const currentEvents = [...this._state.events, { ...rawEvent, timestamp: new Date().toLocaleTimeString() }];
+
+    // Deduplication check based on event_id if present
+    if (data && typeof data === 'object' && data.event_id) {
+      if (this._seenEventIds.has(data.event_id)) {
+        return; // Skip duplicate event
+      }
+      this._seenEventIds.add(data.event_id);
+      if (this._seenEventIds.size > 1000) {
+        // Prune older event IDs to bound set size
+        const first = this._seenEventIds.values().next().value;
+        this._seenEventIds.delete(first);
+      }
+    }
+
+    // Append to events buffer (capped at _maxEvents)
+    const newEntry = { ...rawEvent, timestamp: new Date().toLocaleTimeString() };
+    const currentEvents = [...this._state.events, newEntry].slice(-this._maxEvents);
+
     const nextStages = { ...this._state.agentStages };
     const nextDiag = { ...this._state.diagnostics };
     let nextRunStage = this._state.runStage;
+
+    // Do not alter terminal stage
+    const isAlreadyTerminal = TERMINAL_STAGES.includes(this._state.runStage);
 
     if (data && typeof data === 'object') {
       if (data.token_usage) {
@@ -148,13 +190,15 @@ export class AppStore {
 
     switch (event) {
       case 'RunStartedEvent':
-        nextRunStage = 'PLANNING';
-        nextStages.PLANNER = 'running';
+        if (!isAlreadyTerminal) {
+          nextRunStage = 'PLANNING';
+          nextStages.PLANNER = 'running';
+        }
         if (data.total_tasks) nextDiag.totalTasks = data.total_tasks;
         break;
 
       case 'TaskScheduledEvent':
-        if (data.assigned_role && nextStages[data.assigned_role]) {
+        if (data.assigned_role && nextStages[data.assigned_role] !== undefined) {
           if (nextStages[data.assigned_role] === 'idle') {
             nextStages[data.assigned_role] = 'queued';
           }
@@ -163,23 +207,22 @@ export class AppStore {
 
       case 'TaskStartedEvent':
         if (data.subtask_id) {
-          // Determine active stage based on subtask naming or role
           const lower = data.subtask_id.toLowerCase();
           if (lower.includes('research')) {
             nextStages.RESEARCHER = 'running';
-            nextRunStage = 'RESEARCHING';
+            if (!isAlreadyTerminal) nextRunStage = 'RESEARCHING';
           } else if (lower.includes('anal')) {
             nextStages.ANALYST = 'running';
-            nextRunStage = 'ANALYZING';
+            if (!isAlreadyTerminal) nextRunStage = 'ANALYZING';
           } else if (lower.includes('verif')) {
             nextStages.VERIFIER = 'running';
-            nextRunStage = 'VERIFYING';
+            if (!isAlreadyTerminal) nextRunStage = 'VERIFYING';
           } else if (lower.includes('eval')) {
             nextStages.EVALUATOR = 'running';
-            nextRunStage = 'EVALUATING';
+            if (!isAlreadyTerminal) nextRunStage = 'EVALUATING';
           } else if (lower.includes('report')) {
             nextStages.REPORTER = 'running';
-            nextRunStage = 'REPORTING';
+            if (!isAlreadyTerminal) nextRunStage = 'REPORTING';
           }
         }
         break;
@@ -222,6 +265,7 @@ export class AppStore {
       agentStages: nextStages,
       diagnostics: nextDiag,
       runStage: nextRunStage,
+      isReconnecting: false,
     });
   }
 }
