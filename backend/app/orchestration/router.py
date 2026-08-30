@@ -261,13 +261,34 @@ def create_default_worker_router(
     from app.agents.reporter.worker import ReporterWorker
     from app.agents.researcher.worker import ResearcherWorker
     from app.agents.verifier.worker import VerifierWorker
+    from app.config.settings import get_settings
     from app.intelligence.planner import PlannerAgent
+    from app.intelligence.reporter import ReporterAgent
+
+    cfg = settings or get_settings()
+    llm = create_llm_client(settings=cfg)
 
     router = AgentWorkerRouter(cancellation_token=cancellation_token)
 
-    if planner_worker is None and settings is not None:
-        llm = create_llm_client(settings=settings)
-        planner_worker = PlannerWorker(planner_agent=PlannerAgent(llm_client=llm))
+    if planner_worker is None:
+        if (
+            settings is not None
+            and getattr(settings, "llm_provider", "in_memory") == "gemini"
+        ):
+            planner_worker = PlannerWorker(planner_agent=PlannerAgent(llm_client=llm))
+        else:
+            planner_worker = PlannerWorker()
+
+    if reporter_worker is None:
+        if (
+            settings is not None
+            and getattr(settings, "llm_provider", "in_memory") == "gemini"
+        ):
+            reporter_worker = ReporterWorker(
+                reporter_agent=ReporterAgent(llm_client=llm)
+            )
+        else:
+            reporter_worker = ReporterWorker(reporter_agent=ReporterAgent())
 
     if researcher_worker is None and settings is not None:
         from app.adapters.search.factory import (
@@ -277,10 +298,10 @@ def create_default_worker_router(
         from app.rag.factory import create_embedding_model, create_vector_store
         from app.rag.memory import VectorMemory
 
-        search_client = create_search_client(settings=settings)
-        academic_search_client = create_academic_search_client(settings=settings)
-        embedding_model = create_embedding_model(settings=settings)
-        vector_store = create_vector_store(settings=settings)
+        search_client = create_search_client(settings=cfg)
+        academic_search_client = create_academic_search_client(settings=cfg)
+        embedding_model = create_embedding_model(settings=cfg)
+        vector_store = create_vector_store(settings=cfg)
         vector_memory = VectorMemory(
             vector_store=vector_store,
             embedding_model=embedding_model,

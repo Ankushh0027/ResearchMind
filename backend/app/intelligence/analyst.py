@@ -5,6 +5,7 @@ and synthesizes evidence-backed KeyFinding reports with strict run_id isolation,
 provenance preservation, and deterministic tie-breaking.
 """
 
+import re
 import uuid
 from typing import Protocol, runtime_checkable
 
@@ -85,21 +86,69 @@ class AnalystAgent(AnalystProtocol):
     def _cluster_claims(
         self, claims: list[ExtractedClaim]
     ) -> dict[str, list[ExtractedClaim]]:
-        """Cluster claims deterministically by primary topic tag or source domain."""
+        """Cluster claims deterministically by semantic topic or statement keywords."""
         clusters: dict[str, list[ExtractedClaim]] = {}
 
         for claim in claims:
-            # Determine cluster key deterministically
+            stmt_lower = claim.statement.lower()
+
+            # 1. Check explicit topic tags
             if claim.topic_tags:
-                cluster_key = claim.topic_tags[0].strip().title()
+                cluster_key = (
+                    f"Thematic Synthesis: {claim.topic_tags[0].strip().title()}"
+                )
+            # 2. Semantic keyword detection for common research themes
+            elif any(
+                w in stmt_lower
+                for w in ("productiv", "speed", "faster", "velocity", "completion time")
+            ):
+                cluster_key = "Developer Productivity & Task Completion"
+            elif any(
+                w in stmt_lower
+                for w in (
+                    "quality",
+                    "maintainab",
+                    "readab",
+                    "architectur",
+                    "churn",
+                    "complexity",
+                )
+            ):
+                cluster_key = "Code Quality & Maintainability"
+            elif any(
+                w in stmt_lower
+                for w in (
+                    "defect",
+                    "vulnerab",
+                    "error",
+                    "security",
+                    "flaw",
+                    "injection",
+                    "bug",
+                )
+            ):
+                cluster_key = "Defect Rates & Security Vulnerabilities"
+            elif any(
+                w in stmt_lower
+                for w in ("quantum", "superconduct", "phase transition", "coherence")
+            ):
+                cluster_key = "Quantum Coherence & Physical Dynamics"
+            elif any(
+                w in stmt_lower
+                for w in ("crispr", "cas9", "off-target", "cleavage", "gene")
+            ):
+                cluster_key = "Genomic Specificity & Off-Target Mitigation"
             elif (
                 claim.metadata
-                and isinstance(claim.metadata.get("source_domain"), str)
-                and claim.metadata["source_domain"].strip()
+                and isinstance(claim.metadata.get("source_title"), str)
+                and claim.metadata["source_title"].strip()
             ):
-                cluster_key = f"Domain: {claim.metadata['source_domain'].strip()}"
+                raw_title = claim.metadata["source_title"].strip()
+                # Clean title to at most 6 words
+                words = raw_title.split()[:6]
+                cluster_key = " ".join(words)
             else:
-                cluster_key = "General Factual Findings"
+                cluster_key = "Core Empirical Findings"
 
             if cluster_key not in clusters:
                 clusters[cluster_key] = []
@@ -128,7 +177,7 @@ class AnalystAgent(AnalystProtocol):
         clean_run_id = run_id.strip()
 
         # Validate claims and enforce run isolation
-        seen_claim_ids: set[str] = set()
+        seen_statements: set[str] = set()
         deduplicated_claims: list[ExtractedClaim] = []
 
         for claim in claims:
@@ -141,8 +190,10 @@ class AnalystAgent(AnalystProtocol):
                     f"which does not match analysis run_id '{clean_run_id}'"
                 )
 
-            if claim.claim_id not in seen_claim_ids:
-                seen_claim_ids.add(claim.claim_id)
+            # Deduplicate near-identical statements
+            norm_stmt = re.sub(r"\s+", " ", claim.statement.strip().lower())
+            if norm_stmt not in seen_statements:
+                seen_statements.add(norm_stmt)
                 deduplicated_claims.append(claim)
 
         # Cluster claims
@@ -171,7 +222,7 @@ class AnalystAgent(AnalystProtocol):
                     reason="Finding has no supporting claim or evidence IDs",
                 )
 
-            # Build narrative
+            # Build narrative from distinct statements
             statements = [c.statement.rstrip(".") for c in cluster_claims]
             narrative = ". ".join(statements) + "."
 
@@ -188,7 +239,7 @@ class AnalystAgent(AnalystProtocol):
             finding = KeyFinding(
                 finding_id=generate_finding_id(),
                 run_id=clean_run_id,
-                title=f"Thematic Synthesis: {cluster_name}",
+                title=cluster_name,
                 narrative=narrative,
                 claim_ids=claim_ids,
                 evidence_ids=all_evidence_ids,

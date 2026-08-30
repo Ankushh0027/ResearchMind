@@ -780,6 +780,19 @@ body {
   padding: 1.5rem;
 }
 
+.direct-answer-box {
+  background: rgba(6, 182, 212, 0.04);
+  border: 1px solid rgba(6, 182, 212, 0.25);
+  border-left: 4px solid var(--accent-cyan);
+}
+
+.answer-text {
+  font-size: 1.1rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 /* Findings Stack & Provenance Drill-down */
 .findings-stack {
   display: flex;
