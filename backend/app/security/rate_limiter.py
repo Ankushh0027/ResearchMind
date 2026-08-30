@@ -28,6 +28,7 @@ from typing import Protocol, runtime_checkable
 from fastapi import Depends, HTTPException, Request
 
 from app.config.settings import AppSettings, get_settings
+from app.security.audit import SecurityEventType, log_security_event
 
 logger = logging.getLogger(__name__)
 
@@ -42,64 +43,28 @@ class RateLimiterProtocol(Protocol):
     """
 
     def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
-        """Return True if the request is within the rate limit, False otherwise.
-
-        Args:
-            key: Client identifier (e.g., IP address, API key prefix).
-            max_requests: Maximum number of requests allowed in the window.
-            window_seconds: Rolling window duration in seconds.
-
-        Returns:
-            ``True`` if the request should be allowed, ``False`` if it should
-            be rejected with HTTP 429.
-        """
+        """Return True if the request is within the rate limit, False otherwise."""
         ...
 
     def reset(self, key: str | None = None) -> None:
-        """Reset rate-limit counters.
-
-        Args:
-            key: If provided, reset only this key.  If ``None``, reset all.
-        """
+        """Reset rate-limit counters."""
         ...
 
 
 class InMemoryRateLimiter:
     """Thread-safe sliding-window rate limiter using monotonic timestamps.
 
-    Each unique ``key`` (typically a client IP address) has an associated
-    :class:`~collections.deque` that stores the monotonic timestamps of
-    accepted requests within the current window.  On each call to
-    :meth:`is_allowed`, stale timestamps (older than ``window_seconds``)
-    are pruned before deciding whether to accept the new request.
-
-    ⚠️  This implementation is PROCESS-LOCAL.  It is suitable for:
-    - Single-instance deployments.
-    - Unit and integration test environments.
-
-    It is NOT suitable for:
-    - Horizontally scaled multi-instance deployments.
-    - Containers behind a load balancer with shared rate-limit state.
-    For those scenarios, implement ``RateLimiterProtocol`` with a
-    Redis-backed or equivalent distributed store.
+    Each unique ``key`` (typically a tenant ID or client IP address) has an
+    associated :class:`~collections.deque` that stores the monotonic timestamps
+    of accepted requests within the current window.
     """
 
     def __init__(self) -> None:
         self._lock = Lock()
-        # key -> deque of monotonic timestamps (float, seconds)
         self._windows: defaultdict[str, deque[float]] = defaultdict(deque)
 
     def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
-        """Check and record a request against the sliding window.
-
-        Args:
-            key: Client identifier string.
-            max_requests: Maximum requests in the window.
-            window_seconds: Window size in seconds.
-
-        Returns:
-            ``True`` if the request is within the limit, ``False`` otherwise.
-        """
+        """Check and record a request against the sliding window."""
         now = time.monotonic()
         cutoff = now - window_seconds
 
@@ -116,11 +81,7 @@ class InMemoryRateLimiter:
             return True
 
     def reset(self, key: str | None = None) -> None:
-        """Reset the rate-limit state.
-
-        Args:
-            key: Specific client key to reset, or ``None`` to reset all.
-        """
+        """Reset the rate-limit state."""
         with self._lock:
             if key is None:
                 self._windows.clear()
@@ -128,79 +89,47 @@ class InMemoryRateLimiter:
                 self._windows.pop(key, None)
 
 
-# ---------------------------------------------------------------------------
 # Module-level singleton with override support for testing
-# ---------------------------------------------------------------------------
-
 _rate_limiter: RateLimiterProtocol = InMemoryRateLimiter()
 
 
 def get_rate_limiter() -> RateLimiterProtocol:
-    """Return the active rate-limiter instance (module-level singleton).
-
-    In production: returns the default ``InMemoryRateLimiter``.
-    In tests: can be overridden via :func:`set_rate_limiter` to inject a
-    custom implementation without patching the module directly.
-    """
+    """Return the active rate-limiter instance."""
     return _rate_limiter
 
 
 def set_rate_limiter(limiter: RateLimiterProtocol) -> None:
-    """Override the active rate-limiter singleton.
-
-    Intended for test setup so deterministic custom implementations can be
-    injected without modifying production code paths.
-
-    Args:
-        limiter: A ``RateLimiterProtocol``-conforming instance.
-    """
+    """Override the active rate-limiter singleton (for tests)."""
     global _rate_limiter
     _rate_limiter = limiter
 
 
 def _get_client_key(request: Request) -> str:
-    """Extract a best-effort client identifier from the request.
+    """Extract a best-effort rate limit key identifier from the request.
 
-    Prefers ``X-Forwarded-For`` (first hop) for deployments behind a
-    reverse proxy, then falls back to the direct client IP.
-
-    Args:
-        request: The incoming Starlette request.
-
-    Returns:
-        A string key uniquely identifying the client.
+    Prefers resolved ``tenant_id`` from auth state, falls back to ``X-Forwarded-For``
+    or client IP.
     """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if tenant_id and tenant_id != "default-tenant":
+        return f"tenant:{tenant_id}"
+
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+        ip = forwarded_for.split(",")[0].strip()
+        return f"ip:{ip}"
+
     if request.client:
-        return request.client.host
-    return "unknown"
+        return f"ip:{request.client.host}"
+
+    return "ip:unknown"
 
 
 async def rate_limit_submissions(
     request: Request,
     settings: AppSettings = Depends(get_settings),
 ) -> None:
-    """FastAPI dependency enforcing rate limits on submission endpoints.
-
-    When ``RATE_LIMIT_ENABLED`` is ``False`` (default), this is a no-op.
-
-    When ``RATE_LIMIT_ENABLED`` is ``True``:
-    - Identifies the client by IP (with X-Forwarded-For support).
-    - Checks the sliding-window counter against configured limits.
-    - Returns HTTP 429 with ``Retry-After`` header if the limit is exceeded.
-
-    ⚠️  The underlying ``InMemoryRateLimiter`` is PROCESS-LOCAL.
-    Limits are NOT enforced globally across multiple instances.
-
-    Args:
-        request: The incoming FastAPI request.
-        settings: Injected application settings.
-
-    Raises:
-        HTTPException: HTTP 429 when rate limit is exceeded.
-    """
+    """FastAPI dependency enforcing rate limits on submission endpoints."""
     if not settings.rate_limit_enabled:
         return
 
@@ -215,17 +144,26 @@ async def rate_limit_submissions(
 
     if not allowed:
         retry_after = settings.rate_limit_window_seconds
-        logger.warning(
-            "Rate limit exceeded",
-            extra={"client_key": client_key, "path": str(request.url.path)},
+        tenant_id = getattr(request.state, "tenant_id", None)
+
+        log_security_event(
+            event_type=SecurityEventType.RATE_LIMIT_EXCEEDED,
+            path=str(request.url.path),
+            method=request.method,
+            status_code=429,
+            tenant_id=tenant_id,
+            client_ip=client_key,
+            details={
+                "max_requests": settings.rate_limit_requests,
+                "window_seconds": settings.rate_limit_window_seconds,
+            },
         )
+
         raise HTTPException(
             status_code=429,
             detail={
                 "error_code": "RATE_LIMIT_EXCEEDED",
-                "message": (
-                    f"Rate limit exceeded. Try again in {retry_after} seconds."
-                ),
+                "message": f"Rate limit exceeded. Try again in {retry_after} seconds.",
                 "retry_after_seconds": retry_after,
             },
             headers={"Retry-After": str(retry_after)},

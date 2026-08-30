@@ -122,7 +122,7 @@ class ResearchService:
         await self._consumer.stop()
 
     async def create_and_start_run(
-        self, request: CreateRunRequest
+        self, request: CreateRunRequest, tenant_id: str = "default-tenant"
     ) -> RunSummaryResponse:
         """Initialize research run, persist initial record, publish JobEnvelope, and return summary."""
         # Auto-start consumer if not active
@@ -149,11 +149,13 @@ class ResearchService:
             cancellation_token=token,
             event_sink=event_sink,
             checkpoint_repo=self._checkpoint_repo,
+            tenant_id=tenant_id,
         )
 
         # 1. Persist initial RunRecord into durable repository
         initial_record = RunRecord(
             run_id=run_id,
+            tenant_id=tenant_id,
             goal=goal,
             status=RunStage.QUEUED,
             version=1,
@@ -194,10 +196,15 @@ class ResearchService:
             duration_seconds=0.0,
         )
 
-    async def get_run(self, run_id: str) -> RunDetailResponse | None:
+    async def get_run(
+        self, run_id: str, tenant_id: str | None = None
+    ) -> RunDetailResponse | None:
         """Fetch detailed status, token usage, and compiled ResearchDossier for a run ID."""
         context = self._runs.get(run_id)
         if context is not None:
+            if tenant_id is not None and context.tenant_id != tenant_id:
+                return None
+
             # Compute live duration if still active
             if context.status in (
                 RunStage.QUEUED,
@@ -233,6 +240,9 @@ class ResearchService:
         if record is None:
             return None
 
+        if tenant_id is not None and record.tenant_id != tenant_id:
+            return None
+
         return RunDetailResponse(
             run_id=record.run_id,
             plan_id=record.plan_id,
@@ -250,10 +260,14 @@ class ResearchService:
         )
 
     async def get_artifact(
-        self, run_id: str, artifact_id: str
+        self, run_id: str, artifact_id: str, tenant_id: str | None = None
     ) -> tuple[ArtifactMetadata, bytes] | None:
         """Fetch artifact metadata and content bytes for a given run and artifact identifier."""
-        # Check in active context first
+        # Check tenant access first
+        run_detail = await self.get_run(run_id, tenant_id=tenant_id)
+        if run_detail is None:
+            return None
+
         target_meta: ArtifactMetadata | None = None
         context = self._runs.get(run_id)
         if context is not None:
@@ -282,13 +296,16 @@ class ResearchService:
         )
         return target_meta, content
 
-    async def cancel_run(self, run_id: str) -> CancelRunResponse:
+    async def cancel_run(
+        self, run_id: str, tenant_id: str | None = None
+    ) -> CancelRunResponse:
         """Signal cooperative cancellation for an in-flight research run."""
+        run_detail = await self.get_run(run_id, tenant_id=tenant_id)
+        if run_detail is None:
+            raise KeyError(f"Research run '{run_id}' not found")
+
         context = self._runs.get(run_id)
         record = await self._run_repo.get_run(run_id)
-
-        if context is None and record is None:
-            raise KeyError(f"Research run '{run_id}' not found")
 
         if context is not None:
             context.cancellation_token.cancel(reason="Cancelled by client request")
@@ -309,14 +326,16 @@ class ResearchService:
             message="Cancellation requested successfully",
         )
 
-    async def stream_events(self, run_id: str) -> AsyncIterator[dict[str, Any]]:
+    async def stream_events(
+        self, run_id: str, tenant_id: str | None = None
+    ) -> AsyncIterator[dict[str, Any]]:
         """Yield Server-Sent Events (SSE) detailing real-time run progress and task transitions."""
+        run_detail = await self.get_run(run_id, tenant_id=tenant_id)
+        if run_detail is None:
+            raise KeyError(f"Research run '{run_id}' not found")
+
         context = self._runs.get(run_id)
         if not context:
-            record = await self._run_repo.get_run(run_id)
-            if not record:
-                raise KeyError(f"Research run '{run_id}' not found")
-            # If historical run without active sink, exit immediately
             return
 
         last_index = 0

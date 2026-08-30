@@ -1,17 +1,4 @@
-"""ASGI middleware for limiting incoming request body sizes.
-
-Motivation:
-    Without an early size check, a malicious or accidental oversized payload
-    would be fully buffered into memory before FastAPI/Pydantic validation
-    executes.  Checking the ``Content-Length`` header at the ASGI boundary
-    lets us reject abusive payloads cheaply before any body parsing occurs.
-
-Limitations:
-    ``Content-Length`` can be omitted or spoofed by clients.  This middleware
-    trusts the declared header as a first-pass guard.  For full streaming
-    protection, a reverse proxy (Nginx, Cloud Run) should also enforce body
-    limits, which is noted in the Phase 6.5 documentation.
-"""
+"""ASGI middleware for limiting incoming request body sizes."""
 
 from __future__ import annotations
 
@@ -22,32 +9,19 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config.settings import get_settings
+from app.security.audit import SecurityEventType, log_security_event
 
 logger = logging.getLogger(__name__)
 
 
 class RequestSizeLimitMiddleware:
-    """Pure ASGI middleware that rejects oversized requests early.
-
-    Checks the ``Content-Length`` request header before the request is
-    dispatched to FastAPI.  Requests whose declared size exceeds
-    ``settings.max_request_body_bytes`` are rejected with HTTP 413 and a
-    structured JSON body.
-
-    Unlike :class:`starlette.middleware.base.BaseHTTPMiddleware` this is
-    implemented as a raw ASGI callable so it fires before body parsing begins,
-    keeping memory overhead minimal.
-
-    Usage::
-
-        app.add_middleware(RequestSizeLimitMiddleware)
-    """
+    """Pure ASGI middleware that rejects oversized requests early."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """ASGI entry-point.  Reject HTTP requests with oversized Content-Length."""
+        """ASGI entry-point. Reject HTTP requests with oversized Content-Length."""
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
@@ -65,12 +39,14 @@ class RequestSizeLimitMiddleware:
             max_bytes = settings.max_request_body_bytes
 
             if content_length > max_bytes:
-                logger.warning(
-                    "Request rejected: payload too large",
-                    extra={
+                log_security_event(
+                    event_type=SecurityEventType.PAYLOAD_TOO_LARGE,
+                    path=str(scope.get("path", "")),
+                    method=str(scope.get("method", "")),
+                    status_code=413,
+                    details={
                         "content_length": content_length,
                         "max_bytes": max_bytes,
-                        "path": scope.get("path", ""),
                     },
                 )
                 response = JSONResponse(

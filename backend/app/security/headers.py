@@ -6,11 +6,7 @@ Headers applied on every response:
 - ``Referrer-Policy: strict-origin-when-cross-origin``
 - ``X-XSS-Protection: 0``                   — disable legacy XSS filter (modern browsers)
 - ``Content-Security-Policy``               — permissive policy safe for Swagger/OpenAPI docs
-
-The CSP is intentionally relaxed on ``script-src`` and ``style-src`` to
-allow FastAPI's built-in ``/docs`` (Swagger UI) and ``/redoc`` pages to
-render correctly.  Tightening CSP further would require hosting Swagger
-assets locally and is outside the hackathon scope.
+- ``Cache-Control: no-store, max-age=0``    — attached to API endpoint responses to prevent client/proxy caching
 """
 
 from __future__ import annotations
@@ -21,13 +17,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-# A CSP that allows Swagger UI and ReDoc to function while blocking
-# obviously dangerous inline behaviour.
 _CSP = (
     "default-src 'self'; "
-    # Swagger UI loads scripts from cdn.jsdelivr.net
     "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    # Swagger UI loads fonts and styles from cdn.jsdelivr.net
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com; "
     "img-src 'self' data: https:; "
@@ -37,7 +29,6 @@ _CSP = (
     "base-uri 'self';"
 )
 
-# Security headers attached to every response.
 _SECURITY_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -48,15 +39,7 @@ _SECURITY_HEADERS: dict[str, str] = {
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """ASGI middleware that appends standard HTTP security headers to all responses.
-
-    Designed to be safe for FastAPI applications that serve ``/docs``,
-    ``/redoc``, and ``/openapi.json`` alongside REST endpoints.
-
-    Usage::
-
-        app.add_middleware(SecurityHeadersMiddleware)
-    """
+    """ASGI middleware that appends standard HTTP security headers to all responses."""
 
     async def dispatch(
         self,
@@ -67,6 +50,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         for header, value in _SECURITY_HEADERS.items():
             response.headers[header] = value
+
+        # Attach anti-caching header to API endpoints (avoiding breaking SSE streams which use no-cache)
+        if (
+            request.url.path.startswith("/api/v1/")
+            and "Cache-Control" not in response.headers
+        ):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+
         return response
 
 

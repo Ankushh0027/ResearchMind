@@ -21,6 +21,7 @@ Coverage:
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -126,18 +127,18 @@ async def test_e2e_valid_api_key_returns_201(monkeypatch: pytest.MonkeyPatch) ->
 async def test_e2e_constant_time_comparison_path_exercised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test 4: Constant-time comparison is used (secrets.compare_digest called)."""
-    import secrets
+    """Test 4: Constant-time comparison is used (hmac.compare_digest called)."""
+    import hmac
 
     compare_calls: list[bool] = []
-    original = secrets.compare_digest
+    original = hmac.compare_digest
 
-    def tracking_compare(a: bytes, b: bytes) -> bool:
-        result = original(a, b)
+    def tracking_compare(a: Any, b: Any) -> bool:
+        result = bool(original(a, b))
         compare_calls.append(result)
         return result
 
-    monkeypatch.setattr(secrets, "compare_digest", tracking_compare)
+    monkeypatch.setattr(hmac, "compare_digest", tracking_compare)
     app = _make_app(monkeypatch, auth_enabled=True)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -146,7 +147,7 @@ async def test_e2e_constant_time_comparison_path_exercised(
             json={"query": "test"},
             headers={"Authorization": f"Bearer {VALID_KEY}"},
         )
-    assert len(compare_calls) >= 1, "secrets.compare_digest was not called"
+    assert len(compare_calls) >= 1, "hmac.compare_digest was not called"
 
 
 @pytest.mark.asyncio

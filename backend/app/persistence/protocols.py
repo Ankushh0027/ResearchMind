@@ -32,12 +32,14 @@ class RunContext:
         cancellation_token: CancellationToken,
         event_sink: InMemoryEventSink,
         checkpoint_repo: CheckpointRepositoryProtocol,
+        tenant_id: str = "default-tenant",
     ) -> None:
         self.run_id = run_id
         self.goal = goal
         self.cancellation_token = cancellation_token
         self.event_sink = event_sink
         self.checkpoint_repo = checkpoint_repo
+        self.tenant_id = tenant_id
         self.created_at: datetime = _utc_now()
         self.start_time: float = time.monotonic()
         self.status: RunStage = RunStage.QUEUED
@@ -58,6 +60,10 @@ class RunRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: str = Field(..., min_length=1, description="Unique research run identifier")
+    tenant_id: str = Field(
+        default="default-tenant",
+        description="Associated tenant identifier for multi-tenant isolation",
+    )
     goal: ResearchGoal = Field(..., description="Original research inquiry objective")
     status: RunStage = Field(
         default=RunStage.QUEUED, description="Current lifecycle stage"
@@ -138,6 +144,7 @@ class RunRecord(BaseModel):
         self,
         *,
         status: RunStage | None = None,
+        tenant_id: str | None = None,
         plan_id: str | None = None,
         completed_task_ids: tuple[str, ...] | list[str] | None = None,
         failed_task_ids: tuple[str, ...] | list[str] | None = None,
@@ -163,6 +170,8 @@ class RunRecord(BaseModel):
         dump = self.model_dump()
         if status is not None:
             dump["status"] = status
+        if tenant_id is not None:
+            dump["tenant_id"] = tenant_id
         if plan_id is not None:
             dump["plan_id"] = plan_id
         if completed_task_ids is not None:

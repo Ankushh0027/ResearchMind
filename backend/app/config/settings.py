@@ -432,6 +432,19 @@ class AppSettings(BaseSettings):
             "Only used when API_AUTH_ENABLED=true."
         ),
     )
+    api_keys_json: str = Field(
+        default="",
+        alias="API_KEYS_JSON",
+        description=(
+            "JSON map or list of API keys to tenant identities for multi-tenant deployments. "
+            'Example: \'{"key1": "tenant-1", "key2": "tenant-2"}\''
+        ),
+    )
+    audit_logging_enabled: bool = Field(
+        default=True,
+        alias="AUDIT_LOGGING_ENABLED",
+        description="Enable structured security audit logging for authentication and access events.",
+    )
 
     # CORS Configuration
     # Stored as a raw string so pydantic-settings passes the env var through

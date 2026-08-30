@@ -1,10 +1,17 @@
-"""Security policies, role permission matrices, untrusted content boundaries, and SSRF validation.
-
-Phase 6.5 additions: API-key authentication, sliding-window rate limiting,
-security headers middleware, and request-size protection.
+"""Security policies, role permission matrices, untrusted content boundaries,
+API-key authentication, tenant resolution, rate limiting, and security audit logging.
 """
 
+from app.security.audit import (
+    SecurityAuditEvent,
+    SecurityEventType,
+    log_security_event,
+    sanitize_audit_details,
+)
 from app.security.auth import (
+    TenantContext,
+    compute_key_digest,
+    get_current_tenant,
     validate_api_key_constant_time,
     verify_api_key,
 )
@@ -35,15 +42,22 @@ __all__ = [
     "BLOCKED_HOSTNAMES",
     "ContentBoundarySanitizer",
     "InMemoryRateLimiter",
-    "RateLimiterProtocol",
     "ROLE_TOOL_PERMISSIONS",
+    "RateLimiterProtocol",
     "RequestSizeLimitMiddleware",
     "SSRFProtectionError",
+    "SecurityAuditEvent",
     "SecurityHeadersMiddleware",
     "SecurityPolicy",
+    "SecurityEventType",
+    "TenantContext",
     "UntrustedContentEnvelope",
+    "compute_key_digest",
+    "get_current_tenant",
     "get_rate_limiter",
+    "log_security_event",
     "rate_limit_submissions",
+    "sanitize_audit_details",
     "set_rate_limiter",
     "validate_api_key_constant_time",
     "validate_url_safety",

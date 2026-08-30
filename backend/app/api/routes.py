@@ -1,13 +1,12 @@
 """FastAPI route handlers for REST endpoints and Server-Sent Events (SSE).
 
-Phase 6.5 changes:
+Phase 7.2 changes:
 - ``/healthz`` remains publicly accessible (no auth, no rate limit).
-- All ``/api/v1/*`` endpoints require ``verify_api_key`` when
-  ``API_AUTH_ENABLED=true``.
-- ``POST /api/v1/runs`` additionally enforces ``rate_limit_submissions``
-  when ``RATE_LIMIT_ENABLED=true``.
-- Research goal length is validated against ``MAX_RESEARCH_GOAL_LENGTH``
-  before dispatching to the service layer.
+- All ``/api/v1/*`` endpoints resolve tenant identity via ``get_current_tenant``
+  when ``API_AUTH_ENABLED=true``.
+- Cross-tenant resource access returns HTTP 404 to prevent IDOR vulnerabilities.
+- ``POST /api/v1/runs`` additionally enforces ``rate_limit_submissions``.
+- Research goal length is validated against ``MAX_RESEARCH_GOAL_LENGTH``.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from app.api.schemas import (
 )
 from app.api.service import ResearchService
 from app.config.settings import AppSettings, get_settings
-from app.security.auth import verify_api_key
+from app.security.auth import TenantContext, get_current_tenant
 from app.security.rate_limiter import rate_limit_submissions
 from app.storage.models import ArtifactMetadata
 
@@ -84,12 +83,12 @@ async def health_check() -> HealthResponse:
     tags=["Research"],
     summary="Submit a new research inquiry run",
     dependencies=[
-        Depends(verify_api_key),
         Depends(rate_limit_submissions),
     ],
 )
 async def create_research_run(
     body: CreateRunRequest,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
     settings: AppSettings = Depends(get_settings),
 ) -> RunSummaryResponse:
@@ -97,13 +96,9 @@ async def create_research_run(
 
     Protected by API-key authentication (when ``API_AUTH_ENABLED=true``) and
     sliding-window rate limiting (when ``RATE_LIMIT_ENABLED=true``).
-
-    The research goal query is additionally bounded by
-    ``MAX_RESEARCH_GOAL_LENGTH`` as a defence-in-depth input validation layer
-    on top of Pydantic's existing ``max_length=2000`` constraint.
+    Enforces tenant isolation by binding the run to the caller's tenant ID.
     """
-    # Defence-in-depth: validate against the configurable max length in
-    # addition to the Pydantic schema constraint.
+    # Defence-in-depth: validate against the configurable max length
     if len(body.query) > settings.max_research_goal_length:
         raise HTTPException(
             status_code=422,
@@ -122,7 +117,7 @@ async def create_research_run(
         )
 
     try:
-        return await service.create_and_start_run(body)
+        return await service.create_and_start_run(body, tenant_id=tenant.tenant_id)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -138,14 +133,14 @@ async def create_research_run(
     response_model=RunDetailResponse,
     tags=["Research"],
     summary="Get research run progress, metrics, and compiled ResearchDossier",
-    dependencies=[Depends(verify_api_key)],
 )
 async def get_research_run(
     run_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
 ) -> RunDetailResponse:
     """Fetch real-time status, subtask metrics, token usage, and final deliverable."""
-    detail = await service.get_run(run_id)
+    detail = await service.get_run(run_id, tenant_id=tenant.tenant_id)
     if detail is None:
         raise HTTPException(
             status_code=404,
@@ -162,15 +157,15 @@ async def get_research_run(
     response_model=CancelRunResponse,
     tags=["Research"],
     summary="Cancel an active research run",
-    dependencies=[Depends(verify_api_key)],
 )
 async def cancel_research_run(
     run_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
 ) -> CancelRunResponse:
     """Signal cooperative cancellation to halt active subtasks and mark the run CANCELLED."""
     try:
-        return await service.cancel_run(run_id)
+        return await service.cancel_run(run_id, tenant_id=tenant.tenant_id)
     except KeyError:
         raise HTTPException(
             status_code=404,
@@ -193,14 +188,14 @@ async def cancel_research_run(
     "/api/v1/runs/{run_id}/events",
     tags=["Research"],
     summary="Stream live execution events via Server-Sent Events (SSE)",
-    dependencies=[Depends(verify_api_key)],
 )
 async def stream_run_events(
     run_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
 ) -> StreamingResponse:
     """Subscribe to real-time Server-Sent Events (SSE) detailing task transitions and milestones."""
-    detail = await service.get_run(run_id)
+    detail = await service.get_run(run_id, tenant_id=tenant.tenant_id)
     if detail is None:
         raise HTTPException(
             status_code=404,
@@ -211,7 +206,9 @@ async def stream_run_events(
         )
 
     async def _sse_generator() -> AsyncIterator[str]:
-        async for event_dict in service.stream_events(run_id):
+        async for event_dict in service.stream_events(
+            run_id, tenant_id=tenant.tenant_id
+        ):
             event_name = event_dict.get("event", "message")
             event_data = event_dict.get("data", "")
             yield f"event: {event_name}\ndata: {event_data}\n\n"
@@ -232,14 +229,14 @@ async def stream_run_events(
     response_model=list[ArtifactMetadata],
     tags=["Artifacts"],
     summary="List all durable artifact references for a research run",
-    dependencies=[Depends(verify_api_key)],
 )
 async def list_run_artifacts(
     run_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
 ) -> list[ArtifactMetadata]:
     """Retrieve the collection of persistent artifact metadata records for a run."""
-    detail = await service.get_run(run_id)
+    detail = await service.get_run(run_id, tenant_id=tenant.tenant_id)
     if detail is None:
         raise HTTPException(
             status_code=404,
@@ -255,15 +252,15 @@ async def list_run_artifacts(
     "/api/v1/runs/{run_id}/artifacts/{artifact_id}",
     tags=["Artifacts"],
     summary="Download artifact binary or text content by artifact ID",
-    dependencies=[Depends(verify_api_key)],
 )
 async def get_run_artifact(
     run_id: str,
     artifact_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
 ) -> Response:
     """Fetch and stream raw artifact payload with ETag checksum verification."""
-    result = await service.get_artifact(run_id, artifact_id)
+    result = await service.get_artifact(run_id, artifact_id, tenant_id=tenant.tenant_id)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -288,15 +285,15 @@ async def get_run_artifact(
     response_model=ArtifactMetadata,
     tags=["Artifacts"],
     summary="Get artifact metadata and checksum by artifact ID",
-    dependencies=[Depends(verify_api_key)],
 )
 async def get_run_artifact_metadata(
     run_id: str,
     artifact_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
     service: ResearchService = Depends(get_research_service),
 ) -> ArtifactMetadata:
     """Retrieve metadata and SHA-256 integrity hash for an artifact."""
-    result = await service.get_artifact(run_id, artifact_id)
+    result = await service.get_artifact(run_id, artifact_id, tenant_id=tenant.tenant_id)
     if result is None:
         raise HTTPException(
             status_code=404,
