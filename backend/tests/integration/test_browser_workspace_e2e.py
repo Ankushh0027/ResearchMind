@@ -78,6 +78,13 @@ async def test_e2e_critical_journey_simulation(monkeypatch: pytest.MonkeyPatch) 
         assert art_resp.status_code == 200
         assert isinstance(art_resp.json(), list)
 
+        # 7. Get Dedicated Report Endpoint
+        report_resp = await client.get(f"/api/v1/runs/{run_id}/report")
+        assert report_resp.status_code == 200
+        report_data = report_resp.json()
+        assert report_data["run_id"] == run_id
+        assert "Quantum topological insulator" in report_data["title"]
+
 
 @pytest.mark.asyncio
 async def test_auth_failure_and_recovery_flow(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,11 +21,13 @@ from app.api.schemas import (
     CreateRunRequest,
     ErrorResponse,
     HealthResponse,
+    ResearchReportResponse,
     RunDetailResponse,
     RunSummaryResponse,
 )
 from app.api.service import ResearchService
 from app.config.settings import AppSettings, get_settings
+from app.intelligence.models import ResearchDossier
 from app.security.auth import TenantContext, get_current_tenant
 from app.security.rate_limiter import rate_limit_submissions
 from app.storage.models import ArtifactMetadata
@@ -150,6 +152,54 @@ async def get_research_run(
             },
         )
     return detail
+
+
+@router.get(
+    "/api/v1/runs/{run_id}/report",
+    response_model=ResearchReportResponse,
+    tags=["Research"],
+    summary="Get formatted final research report and executive deliverable",
+)
+async def get_research_report(
+    run_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
+    service: ResearchService = Depends(get_research_service),
+) -> ResearchReportResponse:
+    """Fetch structured final research report with key findings, sources, and markdown deliverable."""
+    report = await service.get_report(run_id, tenant_id=tenant.tenant_id)
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "NOT_FOUND",
+                "message": f"Research report for run '{run_id}' not found",
+            },
+        )
+    return report
+
+
+@router.get(
+    "/api/v1/runs/{run_id}/dossier",
+    response_model=ResearchDossier,
+    tags=["Research"],
+    summary="Get structured ResearchDossier object",
+)
+async def get_research_dossier(
+    run_id: str,
+    tenant: TenantContext = Depends(get_current_tenant),
+    service: ResearchService = Depends(get_research_service),
+) -> ResearchDossier:
+    """Fetch raw compiled ResearchDossier schema object."""
+    detail = await service.get_run(run_id, tenant_id=tenant.tenant_id)
+    if detail is None or detail.dossier is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "NOT_FOUND",
+                "message": f"Research dossier for run '{run_id}' not found or not yet compiled",
+            },
+        )
+    return detail.dossier
 
 
 @router.post(
@@ -311,6 +361,8 @@ __all__ = [
     "ErrorResponse",
     "cancel_research_run",
     "create_research_run",
+    "get_research_dossier",
+    "get_research_report",
     "get_research_run",
     "get_research_service",
     "get_run_artifact",

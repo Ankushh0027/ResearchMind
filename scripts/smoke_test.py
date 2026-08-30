@@ -52,10 +52,10 @@ def run_smoke_tests(
     )
 
     passed_checks = 0
-    total_checks = 9
+    total_checks = 10
 
     # 1. Health Probe Check
-    print("\n[CHECK 1/9] Probing /healthz endpoint...")
+    print("\n[CHECK 1/10] Probing /healthz endpoint...")
     try:
         health_data = client.health()
         assert health_data.get("status") == "ok", (
@@ -67,7 +67,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Health check failed: {e}")
 
     # 2. Frontend Workspace Root Probe
-    print("\n[CHECK 2/9] Probing Web Workspace root (GET /)...")
+    print("\n[CHECK 2/10] Probing Web Workspace root (GET /)...")
     try:
         with client._create_http_client() as http:
             resp = http.get("/")
@@ -79,7 +79,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Web Workspace probe failed: {e}")
 
     # 3. Frontend Static Assets Probe
-    print("\n[CHECK 3/9] Probing Web Workspace static CSS & JS assets...")
+    print("\n[CHECK 3/10] Probing Web Workspace static CSS & JS assets...")
     try:
         with client._create_http_client() as http:
             css_resp = http.get("/css/styles.css")
@@ -92,7 +92,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Static asset probe failed: {e}")
 
     # 4. Research Inquiry Submission
-    print("\n[CHECK 4/9] Submitting test research inquiry...")
+    print("\n[CHECK 4/10] Submitting test research inquiry...")
     run_id = None
     try:
         sub_res = client.submit_run(
@@ -110,7 +110,7 @@ def run_smoke_tests(
         print(f"  -> FAIL: Submission failed: {e}")
 
     # 5. Status Retrieval Check
-    print(f"\n[CHECK 5/9] Fetching status for run '{run_id}'...")
+    print(f"\n[CHECK 5/10] Fetching status for run '{run_id}'...")
     if run_id:
         try:
             status_res = client.get_run(run_id)
@@ -135,7 +135,7 @@ def run_smoke_tests(
         print("  -> SKIP: Run submission failed earlier")
 
     # 6. SSE Stream Check
-    print(f"\n[CHECK 6/9] Probing Server-Sent Events stream for run '{run_id}'...")
+    print(f"\n[CHECK 6/10] Probing Server-Sent Events stream for run '{run_id}'...")
     if run_id:
         try:
             events_received = 0
@@ -153,7 +153,7 @@ def run_smoke_tests(
         print("  -> SKIP: Run submission failed earlier")
 
     # 7. Artifact Listing Check
-    print(f"\n[CHECK 7/9] Listing durable artifacts for run '{run_id}'...")
+    print(f"\n[CHECK 7/10] Listing durable artifacts for run '{run_id}'...")
     if run_id:
         try:
             artifacts = client.list_artifacts(run_id)
@@ -165,9 +165,29 @@ def run_smoke_tests(
     else:
         print("  -> SKIP: Run submission failed earlier")
 
-    # 8. Payload Validation Error Guard
+    # 8. Report Endpoint Check
+    print(f"\n[CHECK 8/10] Probing dedicated report endpoint for run '{run_id}'...")
+    if run_id:
+        try:
+            with client._create_http_client() as http:
+                rep_resp = http.get(f"{client.base_url}/api/v1/runs/{run_id}/report")
+                assert rep_resp.status_code == 200, (
+                    f"Expected 200, got {rep_resp.status_code}"
+                )
+                rep_data = rep_resp.json()
+                assert rep_data.get("run_id") == run_id
+            print(
+                "  -> PASS: Dedicated report endpoint responded with structured ResearchReportResponse"
+            )
+            passed_checks += 1
+        except Exception as e:
+            print(f"  -> FAIL: Report endpoint probe failed: {e}")
+    else:
+        print("  -> SKIP: Run submission failed earlier")
+
+    # 9. Payload Validation Error Guard
     print(
-        "\n[CHECK 8/9] Probing request validation guard (HTTP 422 on invalid payload)..."
+        "\n[CHECK 9/10] Probing request validation guard (HTTP 422 on invalid payload)..."
     )
     try:
         with client._create_http_client() as http:
@@ -186,9 +206,9 @@ def run_smoke_tests(
     except Exception as e:
         print(f"  -> FAIL: Validation guard check failed: {e}")
 
-    # 9. Cooperative Run Cancellation
+    # 10. Cooperative Run Cancellation
     print(
-        f"\n[CHECK 9/9] Probing cooperative cancellation endpoint for run '{run_id}'..."
+        f"\n[CHECK 10/10] Probing cooperative cancellation endpoint for run '{run_id}'..."
     )
     if run_id:
         try:

@@ -1,93 +1,123 @@
 /**
- * ResearchMind - Inquiry Form Component
+ * ResearchMind - Clean Research Inquiry Input (Screen 1)
  */
 
 export function renderInquiryForm(container, store, onSubmit) {
-  let selectedTags = new Set(['physics', 'materials science']);
+  let selectedTags = new Set(['ai', 'developer tools', 'productivity']);
 
   const SUGGESTIONS = [
-    'Analyze the current state of retrieval-augmented generation for scientific research, identify the major reliability challenges, compare approaches, and provide evidence-backed conclusions.',
-    'Room-temperature superconductivity in hydride compounds under high pressure',
-    'Quantum topological insulators and Majorana zero modes in solid-state devices',
-    'CRISPR-Cas9 off-target mitigation strategies in clinical human therapeutics',
+    {
+      label: '⚡ Impact of AI Coding Assistants',
+      query: 'What is the impact of AI coding assistants on software developer productivity, code quality, and defect rates?',
+      tags: ['ai', 'developer tools', 'productivity'],
+    },
+    {
+      label: '🔬 RAG for Scientific Research',
+      query: 'Analyze the current state of retrieval-augmented generation for scientific research, identify the major reliability challenges, compare approaches, and provide evidence-backed conclusions.',
+      tags: ['ai', 'rag', 'scientific research', 'reliability'],
+    },
+    {
+      label: '⚛️ Room-Temperature Superconductivity',
+      query: 'Investigate recent empirical claims and replication attempts regarding room-temperature superconductivity in high-pressure hydride compounds.',
+      tags: ['physics', 'materials science', 'superconductivity'],
+    },
+    {
+      label: '🧬 CRISPR-Cas9 Off-Target Mitigation',
+      query: 'Compare high-fidelity Cas9 variants, prime editing, and base editing strategies for minimizing off-target genomic cleavage in clinical gene therapy.',
+      tags: ['biomedical', 'genetics', 'crispr', 'therapeutics'],
+    },
   ];
 
+  const escapeHtml = (unsafe) => {
+    return (unsafe || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
   const update = (state) => {
-    const isRunning = ['QUEUED', 'PLANNING', 'RESEARCHING', 'ANALYZING', 'VERIFYING', 'EVALUATING', 'REPORTING'].includes(state.runStage);
-    const disabledAttr = (state.isSubmitting || isRunning) ? 'disabled' : '';
+    const isSubmitting = state.isSubmitting;
 
     container.innerHTML = `
-      <div class="card">
-        <div class="card-title">
-          <span>🔬 Launch Autonomous Research Inquiry</span>
-          ${state.currentRunId ? `<span class="badge badge-health-ok" style="font-family: var(--font-mono);">${state.currentRunId}</span>` : ''}
-        </div>
+      <div class="inquiry-hero">
+        <div class="hero-badge">Autonomous Multi-Agent Investigation</div>
+        <h2 class="hero-title">What do you want to investigate?</h2>
+        <p class="hero-subtitle">
+          ResearchMind decomposes open-ended questions into parallel agent DAGs, retrieves empirical evidence across arXiv & the web, detects factual contradictions, and compiles verifiable research dossiers.
+        </p>
 
-        <form id="inquiry-form">
+        <form id="inquiry-form" class="inquiry-card">
           <div class="form-group">
-            <label class="form-label" for="inquiry-query">Research Topic / Inquiry Objective</label>
             <textarea
               id="inquiry-query"
-              class="form-textarea"
-              placeholder="e.g. Investigate recent progress in cuprate high-Tc superconductivity mechanisms..."
+              class="form-textarea hero-textarea"
+              placeholder="e.g. What is the impact of AI coding assistants on software developer productivity?"
               required
               minlength="3"
               maxlength="2000"
-              ${disabledAttr}
-            >${state.goalQuery || ''}</textarea>
+              ${isSubmitting ? 'disabled' : ''}
+            >${escapeHtml(state.goalQuery || '')}</textarea>
           </div>
 
-          <div style="margin-bottom: 0.75rem;">
-            <span class="form-label" style="display: block; margin-bottom: 0.25rem;">Suggested Research Inquiries:</span>
+          <div class="suggestions-section">
+            <span class="suggestion-label">Suggested Research Questions:</span>
             <div class="tag-chips">
               ${SUGGESTIONS.map((s, idx) => `
-                <button type="button" class="tag-chip suggestion-btn" data-query="${s}" ${disabledAttr}>${s.slice(0, 45)}...</button>
+                <button
+                  type="button"
+                  class="tag-chip suggestion-btn"
+                  data-index="${idx}"
+                  ${isSubmitting ? 'disabled' : ''}
+                >
+                  ${escapeHtml(s.label)}
+                </button>
               `).join('')}
             </div>
           </div>
 
-          <div class="input-row">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="form-label" for="inquiry-tags">Domain Focus Tags (comma-separated)</label>
+          <div class="inquiry-controls">
+            <div class="form-group" style="flex: 2; margin-bottom: 0;">
+              <label class="form-label" for="inquiry-tags">Domain Focus Tags</label>
               <input
                 id="inquiry-tags"
                 type="text"
                 class="form-input"
-                value="${Array.from(selectedTags).join(', ')}"
-                placeholder="physics, condensed matter, superconductivity"
-                ${disabledAttr}
+                value="${escapeHtml(Array.from(selectedTags).join(', '))}"
+                placeholder="ai, software engineering, productivity"
+                ${isSubmitting ? 'disabled' : ''}
               />
             </div>
 
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="form-label" for="inquiry-subtasks">Max Decomposed Subtasks (<span id="subtasks-val">10</span>)</label>
+            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+              <label class="form-label" for="inquiry-subtasks">Max Subtasks (<span id="subtasks-val">10</span>)</label>
               <input
                 id="inquiry-subtasks"
                 type="range"
-                min="1"
-                max="30"
+                min="2"
+                max="25"
                 value="10"
-                class="form-input"
-                style="padding: 0.2rem;"
-                ${disabledAttr}
+                class="form-range"
+                ${isSubmitting ? 'disabled' : ''}
               />
             </div>
 
-            <div>
+            <div style="display: flex; align-items: flex-end;">
               <button
                 type="submit"
                 id="btn-submit-inquiry"
-                class="btn btn-primary"
-                ${disabledAttr}
+                class="btn btn-primary btn-large"
+                ${isSubmitting ? 'disabled' : ''}
               >
-                ${state.isSubmitting ? 'Submitting...' : '🚀 Start Investigation'}
+                ${isSubmitting ? 'Initiating Pipeline...' : '🚀 Start Investigation'}
               </button>
             </div>
           </div>
 
           ${state.error ? `
-            <div style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-md); color: var(--status-failed);">
-              <strong>Error:</strong> ${state.error}
+            <div class="error-banner">
+              <strong>Error:</strong> ${escapeHtml(state.error)}
             </div>
           ` : ''}
         </form>
@@ -106,8 +136,12 @@ export function renderInquiryForm(container, store, onSubmit) {
 
     container.querySelectorAll('.suggestion-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (queryInput) {
-          queryInput.value = btn.getAttribute('data-query');
+        const idx = parseInt(btn.getAttribute('data-index') || '0', 10);
+        const item = SUGGESTIONS[idx];
+        if (item && queryInput) {
+          queryInput.value = item.query;
+          if (tagsInput) tagsInput.value = item.tags.join(', ');
+          selectedTags = new Set(item.tags);
           queryInput.focus();
         }
       });

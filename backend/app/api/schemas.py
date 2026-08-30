@@ -129,11 +129,33 @@ class ErrorResponse(BaseModel):
     )
 
 
+class ResearchReportResponse(BaseModel):
+    """Dedicated response model for final compiled research report."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(..., description="Target research run ID")
+    title: str = Field(..., description="Formatted title of the research report")
+    status: RunStage = Field(..., description="Current run execution status")
+    dossier: ResearchDossier | None = Field(
+        default=None, description="Structured ResearchDossier if available"
+    )
+    markdown_report: str | None = Field(
+        default=None, description="Publication-ready Markdown text"
+    )
+    sources_count: int = Field(default=0, description="Total unique sources cited")
+    claims_count: int = Field(default=0, description="Total factual claims analyzed")
+    verified_claims_count: int = Field(default=0, description="Total verified claims")
+    duration_seconds: float = Field(default=0.0, description="Execution duration")
+    created_at: datetime = Field(default_factory=_utc_now)
+
+
 __all__ = [
     "CancelRunResponse",
     "CreateRunRequest",
     "ErrorResponse",
     "HealthResponse",
+    "ResearchReportResponse",
     "RunDetailResponse",
     "RunSummaryResponse",
 ]

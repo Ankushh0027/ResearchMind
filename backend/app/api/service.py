@@ -10,6 +10,7 @@ from typing import Any
 from app.api.schemas import (
     CancelRunResponse,
     CreateRunRequest,
+    ResearchReportResponse,
     RunDetailResponse,
     RunSummaryResponse,
 )
@@ -257,6 +258,42 @@ class ResearchService:
             artifacts=tuple(record.artifacts),
             error=record.error,
             created_at=record.created_at,
+        )
+
+    async def get_report(
+        self, run_id: str, tenant_id: str | None = None
+    ) -> ResearchReportResponse | None:
+        """Fetch dedicated report summary and markdown for a completed research run."""
+        detail = await self.get_run(run_id, tenant_id=tenant_id)
+        if detail is None:
+            return None
+
+        title = f"Research Report: {detail.goal_query}"
+        dossier = detail.dossier
+        markdown_report = dossier.markdown_report if dossier else None
+        sources_count = len(dossier.citations) if dossier else 0
+        claims_count = len(dossier.claims) if dossier else 0
+        verified_claims_count = (
+            sum(
+                1
+                for c in dossier.claims
+                if c.confidence_score >= 0.7 and not c.contradiction_notes
+            )
+            if dossier
+            else 0
+        )
+
+        return ResearchReportResponse(
+            run_id=detail.run_id,
+            title=title,
+            status=detail.status,
+            dossier=dossier,
+            markdown_report=markdown_report,
+            sources_count=sources_count,
+            claims_count=claims_count,
+            verified_claims_count=verified_claims_count,
+            duration_seconds=detail.duration_seconds,
+            created_at=detail.created_at,
         )
 
     async def get_artifact(

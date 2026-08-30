@@ -3,37 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ResearchMind — Autonomous Multi-Agent Investigation Studio</title>
-  <meta name="description" content="Production-grade autonomous research agent gateway with real-time multi-agent execution, grounded claims, and verified dossiers.">
+  <title>ResearchMind — Evidence-Grounded Multi-Agent Research System</title>
+  <meta name="description" content="Autonomous multi-agent research platform compiling verified, citation-backed investigative dossiers from primary literature.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <main class="app-container" role="main">
-    <!-- Header & Health Indicator -->
+  <div class="app-container">
+    <!-- Top Navigation & System Health -->
     <header id="header-container" class="header-bar" role="banner"></header>
 
-    <!-- Inquiry Submission Studio -->
-    <section id="inquiry-container" role="region" aria-label="Research Inquiry Studio"></section>
+    <!-- Main Dynamic Screen Container -->
+    <main id="main-content" role="main">
+      <!-- Screen 1: Clean Research Inquiry Input -->
+      <section id="screen-input" class="screen-view" role="region" aria-label="Research Input"></section>
 
-    <!-- Live Execution & Telemetry -->
-    <section id="dag-container" role="region" aria-label="Multi-Agent Pipeline"></section>
+      <!-- Screen 2: Live Multi-Agent Investigation -->
+      <section id="screen-investigating" class="screen-view" style="display: none;" role="region" aria-label="Live Investigation"></section>
 
-    <div class="execution-split">
-      <section id="event-log-container" role="region" aria-label="Live Execution Timeline" aria-live="polite"></section>
-      <section id="diagnostics-container" role="region" aria-label="Run Diagnostics"></section>
-    </div>
+      <!-- Screen 3: Final Research Report & Dossier -->
+      <section id="screen-report" class="screen-view" style="display: none;" role="region" aria-label="Final Research Report"></section>
+    </main>
+  </div>
 
-    <!-- Final Research Dossier -->
-    <section id="dossier-container" role="region" aria-label="Research Dossier"></section>
-
-    <!-- Persistent Artifacts -->
-    <section id="artifacts-container" role="region" aria-label="Persistent Artifacts"></section>
-  </main>
-
-  <!-- API Key & Credentials Modal -->
+  <!-- API Credentials Modal -->
   <div id="settings-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-box">
       <div class="card-title">
@@ -41,8 +36,8 @@
         <button id="btn-close-modal" class="btn btn-secondary btn-sm" aria-label="Close Settings">✕</button>
       </div>
 
-      <div style="margin-bottom: 1.25rem; color: var(--text-secondary); font-size: 0.85rem;">
-        ResearchMind enforces SHA-256 digest authentication. Enter your API key below. Credentials are kept in memory by default.
+      <div style="margin-bottom: 1.25rem; color: var(--text-secondary); font-size: 0.875rem; line-height: 1.5;">
+        ResearchMind enforces SHA-256 binary key digest authentication. Enter your API key below. Credentials are kept in memory by default.
       </div>
 
       <div class="form-group">

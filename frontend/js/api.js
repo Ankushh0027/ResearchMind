@@ -120,6 +120,36 @@ export class ApiClient {
   }
 
   /**
+   * GET /api/v1/runs/{run_id}/report - Fetch final compiled research report
+   */
+  async getReport(runId, apiKey = '') {
+    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/report`, {
+      method: 'GET',
+      headers: this._buildHeaders(apiKey),
+    });
+
+    if (!response.ok) {
+      await this._handleError(response);
+    }
+    return await response.json();
+  }
+
+  /**
+   * GET /api/v1/runs/{run_id}/dossier - Fetch raw compiled ResearchDossier
+   */
+  async getDossier(runId, apiKey = '') {
+    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/dossier`, {
+      method: 'GET',
+      headers: this._buildHeaders(apiKey),
+    });
+
+    if (!response.ok) {
+      await this._handleError(response);
+    }
+    return await response.json();
+  }
+
+  /**
    * POST /api/v1/runs/{run_id}/cancel - Cancel an active research run
    */
   async cancelRun(runId, apiKey = '') {

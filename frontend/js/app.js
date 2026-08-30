@@ -1,16 +1,13 @@
 /**
- * ResearchMind - Main Application Orchestrator (Phase 7.4 Hardened)
+ * ResearchMind - Application Orchestrator & Screen Switcher (Phase 7.5 Overhaul)
  */
 
 import { ApiClient } from './api.js';
-import { AppStore, TERMINAL_STAGES } from './state.js';
+import { AppStore } from './state.js';
 import { renderHeader } from './components/header.js';
 import { renderInquiryForm } from './components/inquiry_form.js';
-import { renderAgentDag } from './components/agent_dag.js';
-import { renderEventLog } from './components/event_log.js';
-import { renderDiagnostics } from './components/diagnostics.js';
-import { renderDossierViewer } from './components/dossier_viewer.js';
-import { renderArtifactExplorer } from './components/artifact_explorer.js';
+import { renderLiveInvestigation } from './components/live_investigation.js';
+import { renderReportViewer } from './components/report_viewer.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const store = new AppStore();
@@ -18,15 +15,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let eventSubscriptionCloser = null;
   let statusPollInterval = null;
 
-  // DOM Container Elements
+  // Top-Level DOM Containers
   const headerEl = document.getElementById('header-container');
-  const inquiryEl = document.getElementById('inquiry-container');
-  const dagEl = document.getElementById('dag-container');
-  const eventLogEl = document.getElementById('event-log-container');
-  const diagnosticsEl = document.getElementById('diagnostics-container');
-  const dossierEl = document.getElementById('dossier-container');
-  const artifactsEl = document.getElementById('artifacts-container');
-  
+  const screenInputEl = document.getElementById('screen-input');
+  const screenInvestigatingEl = document.getElementById('screen-investigating');
+  const screenReportEl = document.getElementById('screen-report');
+
   // Modal Elements
   const modalEl = document.getElementById('settings-modal');
   const modalKeyInput = document.getElementById('modal-api-key');
@@ -36,13 +30,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnClearKey = document.getElementById('btn-clear-key');
 
   // 1. Initialize Components
-  renderHeader(headerEl, store, () => openSettingsModal());
-  renderInquiryForm(inquiryEl, store, (payload) => handleRunSubmission(payload));
-  renderAgentDag(dagEl, store, () => handleCancelRun());
-  renderEventLog(eventLogEl, store);
-  renderDiagnostics(diagnosticsEl, store);
-  renderDossierViewer(dossierEl, store);
-  renderArtifactExplorer(artifactsEl, store, (artId) => handleArtifactDownload(artId));
+  renderHeader(headerEl, store, {
+    onOpenSettings: () => openSettingsModal(),
+    onNewInvestigation: () => handleNewInvestigation(),
+  });
+
+  renderInquiryForm(screenInputEl, store, (payload) => handleRunSubmission(payload));
+
+  renderLiveInvestigation(screenInvestigatingEl, store, {
+    onCancel: () => handleCancelRun(),
+    onReset: () => handleNewInvestigation(),
+  });
+
+  renderReportViewer(screenReportEl, store, {
+    onNewInvestigation: () => handleNewInvestigation(),
+    onDownloadArtifact: (artId) => handleArtifactDownload(artId),
+  });
 
   // 2. Health Check Probe
   const checkHealth = async () => {
@@ -56,7 +59,32 @@ document.addEventListener('DOMContentLoaded', () => {
   checkHealth();
   setInterval(checkHealth, 30000);
 
-  // 3. Settings Modal Management
+  // 3. Screen Visibility State Machine
+  const updateScreenVisibility = (state) => {
+    const stage = state.runStage;
+
+    if (stage === 'COMPLETED' && state.dossier) {
+      // Screen 3: Final Report
+      screenInputEl.style.display = 'none';
+      screenInvestigatingEl.style.display = 'none';
+      screenReportEl.style.display = 'block';
+    } else if (['SUBMITTING', 'QUEUED', 'PLANNING', 'RESEARCHING', 'ANALYZING', 'VERIFYING', 'EVALUATING', 'REPORTING', 'RECONNECTING', 'FAILED', 'CANCELLED'].includes(stage)) {
+      // Screen 2: Live Investigation
+      screenInputEl.style.display = 'none';
+      screenInvestigatingEl.style.display = 'block';
+      screenReportEl.style.display = 'none';
+    } else {
+      // Screen 1: Clean Input Landing
+      screenInputEl.style.display = 'block';
+      screenInvestigatingEl.style.display = 'none';
+      screenReportEl.style.display = 'none';
+    }
+  };
+
+  store.subscribe(updateScreenVisibility);
+  updateScreenVisibility(store.getState());
+
+  // 4. Settings Modal Management
   function openSettingsModal() {
     const { apiKey, rememberApiKey } = store.getState();
     if (modalKeyInput) modalKeyInput.value = apiKey || '';
@@ -97,17 +125,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 4. Research Run Submission Workflow
+  function handleNewInvestigation() {
+    cleanupActiveStreams();
+    store.resetRun();
+    // Clear URL query param if present
+    if (window.history && window.history.replaceState) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('run_id');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }
+
+  // 5. Research Run Submission Workflow
   async function handleRunSubmission(payload) {
     cleanupActiveStreams();
     store.resetRun();
-    store.setState({ isSubmitting: true, goalQuery: payload.query, error: null });
+    store.setState({ isSubmitting: true, goalQuery: payload.query, error: null, runStage: 'SUBMITTING' });
 
     const { apiKey } = store.getState();
 
     try {
       const summary = await api.createRun(payload, apiKey);
       const runId = summary.run_id;
+
+      // Update URL with run_id
+      if (window.history && window.history.replaceState) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('run_id', runId);
+        window.history.replaceState({}, '', url.toString());
+      }
 
       store.setState({
         currentRunId: runId,
@@ -121,11 +167,11 @@ document.addEventListener('DOMContentLoaded', () => {
         onEvent: (event) => {
           store.handleSseEvent(event);
         },
-        onReconnecting: (attempt, delayMs) => {
+        onReconnecting: (attempt) => {
           store.setState({ isReconnecting: true, reconnectAttempt: attempt });
         },
         onError: (err) => {
-          console.warn('SSE Stream interrupted, relying on REST status polling:', err);
+          console.warn('SSE stream interrupted, falling back to REST status polling:', err);
           store.setState({ isStreaming: false, isReconnecting: false });
         },
         onComplete: () => {
@@ -149,36 +195,47 @@ document.addEventListener('DOMContentLoaded', () => {
               updates.diagnostics = {
                 ...diag,
                 totalTokens: detail.total_token_usage.total_tokens || diag.totalTokens,
-                inputTokens: detail.total_token_usage.input_tokens || diag.inputTokens,
-                outputTokens: detail.total_token_usage.output_tokens || diag.outputTokens,
+                inputTokens: detail.total_token_usage.prompt_tokens || diag.inputTokens,
+                outputTokens: detail.total_token_usage.completion_tokens || diag.outputTokens,
                 durationSeconds: detail.duration_seconds || diag.durationSeconds,
+                totalTasks: (detail.completed_task_ids?.length || 0) + (detail.failed_task_ids?.length || 0),
+                completedTasks: detail.completed_task_ids?.length || 0,
+                failedTasks: detail.failed_task_ids?.length || 0,
+                claimsCount: detail.dossier?.claims?.length || diag.claimsCount,
               };
+            }
+
+            if (detail.error) {
+              updates.error = detail.error;
             }
 
             store.setState(updates);
 
-            if (TERMINAL_STAGES.includes(detail.status)) {
+            // If terminal state reached, cleanup polling & SSE
+            if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(detail.status)) {
               cleanupActiveStreams();
             }
           }
-        } catch (err) {
-          console.warn('Status sync poll error:', err);
+        } catch (pollErr) {
+          console.warn('Status poll error:', pollErr);
         }
       };
 
-      // Initial sync and interval polling
-      syncRunState();
+      // Poll every 1.5s while active
       statusPollInterval = setInterval(syncRunState, 1500);
+      syncRunState();
 
     } catch (err) {
+      console.error('Submission failed:', err);
       store.setState({
         isSubmitting: false,
-        error: err.message || 'Failed to initiate research inquiry.',
+        runStage: 'FAILED',
+        error: err.message || 'Failed to submit research inquiry',
       });
     }
   }
 
-  // 5. Cooperative Cancellation
+  // 6. Cooperative Run Cancellation
   async function handleCancelRun() {
     const { currentRunId, apiKey } = store.getState();
     if (!currentRunId) return;
@@ -188,47 +245,53 @@ document.addEventListener('DOMContentLoaded', () => {
       store.setState({ runStage: 'CANCELLED' });
       cleanupActiveStreams();
     } catch (err) {
-      alert(`Cancellation failed: ${err.message}`);
+      console.error('Cancellation request failed:', err);
+      store.setState({ error: err.message || 'Failed to cancel research run' });
     }
   }
 
-  // 6. Artifact Direct Download
+  // 7. Artifact Download
   async function handleArtifactDownload(artifactId) {
-    const { currentRunId, apiKey, artifacts } = store.getState();
+    const { currentRunId, apiKey } = store.getState();
     if (!currentRunId || !artifactId) return;
 
     try {
       const { content, contentType } = await api.downloadArtifact(currentRunId, artifactId, apiKey);
-      const art = (artifacts || []).find(a => a.artifact_id === artifactId);
-      const filename = art ? (art.object_key.split('/').pop() || `${artifactId}.txt`) : `${artifactId}.txt`;
-
       const blob = new Blob([content], { type: contentType || 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filename;
+      a.download = `artifact_${artifactId}`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert(`Failed to download artifact: ${err.message}`);
+      console.error('Download artifact failed:', err);
+      alert(`Could not download artifact: ${err.message}`);
     }
   }
 
-  // 7. Check URL parameters for direct run inspection (?run_id=...)
-  const params = new URLSearchParams(window.location.search);
-  const initialRunId = params.get('run_id');
-  if (initialRunId) {
-    store.setState({ currentRunId: initialRunId, runStage: 'QUEUED' });
+  // 8. Auto-load run_id from URL query if present
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialRunId = urlParams.get('run_id');
+  if (initialRunId && initialRunId.trim()) {
+    const cleanId = initialRunId.trim();
+    store.setState({ currentRunId: cleanId, runStage: 'SUBMITTING' });
     const { apiKey } = store.getState();
-    api.getRun(initialRunId, apiKey).then(detail => {
+    api.getRun(cleanId, apiKey).then(detail => {
       if (detail) {
         store.setState({
-          runStage: detail.status,
           goalQuery: detail.goal_query,
+          runStage: detail.status,
           dossier: detail.dossier || null,
           artifacts: detail.artifacts || [],
+          error: detail.error || null,
         });
       }
-    }).catch(() => {});
+    }).catch(err => {
+      console.warn('Initial run lookup failed:', err);
+      store.resetRun();
+    });
   }
 });
