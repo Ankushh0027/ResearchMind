@@ -115,7 +115,19 @@ def run_smoke_tests(
         try:
             status_res = client.get_run(run_id)
             assert status_res.get("run_id") == run_id
-            print(f"  -> PASS: Retrieved run status '{status_res.get('status')}'")
+            st = status_res.get("status")
+            if st == "COMPLETED":
+                print("  -> PASS: Retrieved status 'COMPLETED' (full dossier compiled)")
+            elif st == "FAILED":
+                print(
+                    "  -> PASS: Retrieved status 'FAILED' (Expected in offline mock mode without live Gemini/Tavily API keys)"
+                )
+            elif st == "CANCELLED":
+                print(
+                    "  -> PASS: Retrieved status 'CANCELLED' (run cooperatively cancelled)"
+                )
+            else:
+                print(f"  -> PASS: Retrieved active in-flight status '{st}'")
             passed_checks += 1
         except Exception as e:
             print(f"  -> FAIL: Status retrieval failed: {e}")
