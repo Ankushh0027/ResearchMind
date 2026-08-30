@@ -445,6 +445,11 @@ class AppSettings(BaseSettings):
         alias="AUDIT_LOGGING_ENABLED",
         description="Enable structured security audit logging for authentication and access events.",
     )
+    serve_frontend: bool = Field(
+        default=True,
+        alias="SERVE_FRONTEND",
+        description="Mount and serve static web workspace assets from the frontend directory.",
+    )
 
     # CORS Configuration
     # Stored as a raw string so pydantic-settings passes the env var through

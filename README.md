@@ -131,7 +131,29 @@ python scripts/smoke_test.py --url https://<your-cloud-run-api-url> --api-key <y
 
 ---
 
-## 6. Implemented Phases & Verification Baseline
+---
+
+## 6. Interactive Web Workspace (`frontend/`)
+
+ResearchMind Phase 7.3 provides an interactive, modern web workspace:
+
+```bash
+# Start backend API and static web workspace
+uvicorn app.api.app:create_app --factory --host 0.0.0.0 --port 8080 --reload
+
+# Open in browser:
+# http://localhost:8080/
+```
+
+### Features
+- **Inquiry Launchpad**: Query submission with domain tags, task bounds, and constraint sliders.
+- **Live Multi-Agent Pipeline**: Real-time SSE execution monitor (`Planner` → `Researcher` → `Analyst` → `Verifier` → `Evaluator` → `Reporter`).
+- **Research Dossier Studio**: Interactive Executive Summary, Key Findings, Verified Claims, Contradiction Alerts, and Evaluation Rubric metrics.
+- **Artifact Explorer**: Persistent artifact viewer and SHA-256 verified direct downloads.
+
+---
+
+## 7. Implemented Phases & Verification Baseline
 
 - [x] **Phase 6.1**: Durable State & Checkpoint Persistence (Google Cloud Firestore)
 - [x] **Phase 6.2**: Distributed Messaging & Task Distribution (Google Cloud Pub/Sub)
@@ -143,3 +165,6 @@ python scripts/smoke_test.py --url https://<your-cloud-run-api-url> --api-key <y
 - [x] **Phase 6.8**: Automated Evaluation Framework, Rubric Scoring & Golden Benchmark Suite
 - [x] **Phase 6.9**: Autonomous Self-Correction, Dynamic Inquiry Refinement & Iterative Loop
 - [x] **Phase 7.0**: Production Cloud Infrastructure, Operator CLI & Multi-Service Deployment Automation
+- [x] **Phase 7.1**: Worker Leases, Heartbeat Supervision & Automatic Crash Recovery
+- [x] **Phase 7.2**: Production API Security, SHA-256 Digest Auth & Tenant Isolation
+- [x] **Phase 7.3**: Interactive Research Workspace & Live Multi-Agent Execution Studio

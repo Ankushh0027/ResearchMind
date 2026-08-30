@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router as api_router
 from app.api.routes import set_global_service
@@ -182,8 +184,22 @@ def create_app(service: ResearchService | None = None) -> FastAPI:
             content=body.model_dump(),
         )
 
-    # Attach router endpoints
+    # Attach router endpoints (high-priority REST & SSE routes)
     app.include_router(api_router)
+
+    # Attach static web workspace if enabled and directory exists
+    if settings.serve_frontend:
+        frontend_dir = Path(__file__).resolve().parents[3] / "frontend"
+        if not frontend_dir.exists():
+            frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+        if not frontend_dir.exists():
+            frontend_dir = Path("frontend").resolve()
+        if frontend_dir.exists() and (frontend_dir / "index.html").exists():
+            app.mount(
+                "/",
+                StaticFiles(directory=str(frontend_dir), html=True),
+                name="frontend",
+            )
 
     return app
 
